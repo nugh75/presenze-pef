@@ -460,7 +460,56 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                     else: st.caption("Nessun dato da mostrare.")
 
                     selected_cols_export_ordered = st.multiselect("Seleziona e ordina le colonne:", options=all_exportable_cols, default=default_cols_final, key="export_cols_selector_ordered_v215")
+                    
+                    st.markdown("**2. Seleziona Periodo per l'Export (opzionale):**")
+                    col1_date, col2_date = st.columns(2)
+                    
+                    with col1_date:
+                        # Determina la data minima e massima nel dataset
+                        min_date = None
+                        if not current_df_for_tab3.empty and 'DataPresenza' in current_df_for_tab3.columns:
+                            valid_dates = current_df_for_tab3['DataPresenza'].dropna()
+                            if not valid_dates.empty:
+                                try:
+                                    min_date = valid_dates.min()
+                                    if not isinstance(min_date, date):
+                                        min_date = pd.to_datetime(min_date).date() if not pd.isna(min_date) else None
+                                except Exception as e:
+                                    st.warning(f"Problema con date: {e}")
+                                    min_date = None
+                        
+                        start_date = st.date_input("Data inizio:", value=min_date, key="export_start_date", help="Lascia vuoto per includere tutti i dati dall'inizio")
+                    
+                    with col2_date:
+                        # Determina la data massima
+                        max_date = None
+                        if not current_df_for_tab3.empty and 'DataPresenza' in current_df_for_tab3.columns:
+                            valid_dates = current_df_for_tab3['DataPresenza'].dropna()
+                            if not valid_dates.empty:
+                                try:
+                                    max_date = valid_dates.max()
+                                    if not isinstance(max_date, date):
+                                        max_date = pd.to_datetime(max_date).date() if not pd.isna(max_date) else None
+                                except Exception as e:
+                                    max_date = None
+                        
+                        end_date = st.date_input("Data fine:", value=max_date, key="export_end_date", help="Lascia vuoto per includere tutti i dati fino alla fine")
 
+                    # Mostra periodo selezionato
+                    if start_date is not None or end_date is not None:
+                        date_filter_text = "Periodo selezionato: "
+                        if start_date is not None:
+                            date_filter_text += f"dal {start_date.strftime('%d/%m/%Y')}"
+                        else:
+                            date_filter_text += "dall'inizio"
+                        
+                        if end_date is not None:
+                            date_filter_text += f" al {end_date.strftime('%d/%m/%Y')}"
+                        else:
+                            date_filter_text += " alla fine"
+                        
+                        st.info(date_filter_text)
+                    
                     if st.button("Genera ed Esporta File Excel", key="export_excel_ordered_v215"):
                         if not selected_cols_export_ordered: st.warning("Seleziona almeno una colonna.")
                         else:
@@ -479,12 +528,30 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                             prog_text = f"Foglio: {sheet_name_cleaned} ({i+1}/{len(unique_courses)})"; prog_bar.progress((i + 1) / len(unique_courses), text=prog_text)
                                             df_sheet = current_df_for_tab3[current_df_for_tab3[course_col_export] == course_value].copy()
                                             if df_sheet.empty: st.write(f"Info: Nessun dato per '{sheet_name_cleaned}', foglio saltato."); continue
+                                            
+                                            # Filtro per periodo di data se selezionato
+                                            if 'DataPresenza' in df_sheet.columns:
+                                                date_filtered = False
+                                                if 'export_start_date' in st.session_state and st.session_state.export_start_date is not None:
+                                                    start_date = st.session_state.export_start_date
+                                                    df_sheet = df_sheet[df_sheet['DataPresenza'] >= start_date]
+                                                    date_filtered = True
+                                                
+                                                if 'export_end_date' in st.session_state and st.session_state.export_end_date is not None:
+                                                    end_date = st.session_state.export_end_date
+                                                    df_sheet = df_sheet[df_sheet['DataPresenza'] <= end_date]
+                                                    date_filtered = True
+                                                
+                                                if date_filtered and df_sheet.empty:
+                                                    st.write(f"Info: Nessun dato per '{sheet_name_cleaned}' nel periodo selezionato, foglio saltato.")
+                                                    continue
+                                            
                                             final_ordered_cols_for_sheet = [col for col in selected_cols_export_ordered if col in df_sheet.columns]
                                             if not final_ordered_cols_for_sheet: st.write(f"Info: Nessuna colonna selezionata trovata per '{sheet_name_cleaned}', foglio saltato."); continue
                                             df_sheet_export = df_sheet[final_ordered_cols_for_sheet]
                                             if df_sheet_export.empty: st.write(f"Info: Nessun dato per '{sheet_name_cleaned}' dopo selezione colonne, foglio saltato."); continue
                                             try:
-                                                rename_map_export = {'PercorsoInternal': 'Percorso Elaborato', 'PercorsoOriginaleInternal': 'Percorso Originale Input', 'PercorsoOriginaleSenzaArt13Internal': 'Percorso (Senza Art13 - Foglio)', 'DenominazioneAttivitaNormalizzataInternal': 'Attività Elaborata'}
+                                                rename_map_export = {'PercorsoInternal': 'Tipo Percorso', 'PercorsoOriginaleInternal': 'Percorso Originale Input', 'PercorsoOriginaleSenzaArt13Internal': 'Denominazione Percorso', 'DenominazioneAttivitaNormalizzataInternal': 'Attività Elaborata'}
                                                 cols_to_rename_final = {k: v for k, v in rename_map_export.items() if k in df_sheet_export.columns}
                                                 df_sheet_export = df_sheet_export.rename(columns=cols_to_rename_final)
                                                 df_sheet_export.to_excel(writer, sheet_name=sheet_name_cleaned, index=False)
@@ -493,7 +560,18 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                             except Exception as writer_error: st.error(f"Errore generale creazione Excel: {writer_error}"); st.exception(writer_error); overall_success = False
                             if overall_success and sheets_written > 0:
                                 prog_bar.progress(1.0, text="Completato!")
-                                output.seek(0); ts = datetime.now().strftime("%Y%m%d_%H%M"); fname = f"Report_Presenze_Dettaglio_PercorsoSenzaArt13_{ts}.xlsx"
+                                output.seek(0); ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                
+                                # Aggiungi informazioni sul periodo al nome del file
+                                period_info = ""
+                                if 'export_start_date' in st.session_state and st.session_state.export_start_date is not None:
+                                    start_str = st.session_state.export_start_date.strftime("%Y%m%d")
+                                    period_info += f"_dal{start_str}"
+                                if 'export_end_date' in st.session_state and st.session_state.export_end_date is not None:
+                                    end_str = st.session_state.export_end_date.strftime("%Y%m%d")
+                                    period_info += f"_al{end_str}"
+                                
+                                fname = f"Report_Presenze_Dettaglio_PercorsoSenzaArt13{period_info}_{ts}.xlsx"
                                 st.success(f"File Excel generato con {sheets_written} fogli!")
                                 if error_messages: st.warning("Alcuni fogli potrebbero aver avuto problemi:"); [st.caption(msg) for msg in error_messages]
                                 st.download_button(label="📥 Scarica Report Excel Dettaglio", data=output, file_name=fname, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_excel_course_ordered_v215")
@@ -519,7 +597,10 @@ else:
     4.  **Gestione Duplicati (Tab 2):** Identifica e rimuovi timbrature ravvicinate.
     5.  **Calcolo Presenze ed Esportazione (Tab 3):**
         *   Filtra per **Percorso (Senza Art.13)** e opzionalmente per **Studente** per vedere i dettagli record per record.
-        *   **Esporta in Excel:** Seleziona e ordina le colonne desiderate. Genera file **dettagliato**, un foglio per codice percorso **estratto dalle parentesi**.
+        *   **Esporta in Excel:** 
+            - Seleziona e ordina le colonne desiderate
+            - Scegli un periodo di date per l'esportazione (opzionale)
+            - Genera file **dettagliato**, un foglio per codice percorso **estratto dalle parentesi**
 
     ### Formato File Suggerito
     *   `CodiceFiscale`, `DataPresenza`, `OraPresenza`, `DenominazionePercorso` (o `percoro`) - Obbligatori
