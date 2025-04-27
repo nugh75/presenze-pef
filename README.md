@@ -1,0 +1,60 @@
+# Gestione Presenze - File README
+
+## Descrizione
+Questa applicazione Streamlit permette di gestire le presenze di un corso, con particolare attenzione a:
+1. Identificazione e rimozione dei record duplicati (con differenza di orario ≤ 10 minuti)
+2. Calcolo delle presenze per studente, suddivise per percorso formativo
+
+## Funzionalità Principali
+- **Normalizzazione dei percorsi formativi**: L'app rimuove automaticamente la dicitura "art. 13" (e varianti) dai nomi dei percorsi per considerarli equivalenti
+- **Visualizzazione dati**: È possibile visualizzare sia i nomi originali dei percorsi che quelli normalizzati
+- **Filtro per percorso**: Permette di filtrare le presenze per percorso formativo specifico
+- **Identificazione duplicati**: Trova e gestisce record duplicati con tempi simili (entro 10 minuti)
+- **Reportistica**: Genera report scaricabili con le presenze per percorso formativo
+
+## Requisiti
+- Python 3.6+
+- Streamlit
+- Pandas
+- Openpyxl (per la lettura di file Excel)
+- Matplotlib (per i grafici)
+
+## Installazione
+1. Crea un ambiente virtuale (facoltativo ma consigliato):
+   ```
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   venv\Scripts\activate     # Windows
+   ```
+
+2. Installa le dipendenze:
+   ```
+   pip install -r requirements.txt
+   ```
+
+## Utilizzo
+1. Avvia l'applicazione:
+   ```
+   streamlit run app.py
+   ```
+   Oppure usa lo script:
+   ```
+   ./run.sh
+   ```
+
+2. Carica un file Excel contenente i dati delle presenze
+3. Esplora le diverse funzionalità tramite le schede:
+   - Analisi Dati: visualizza statistiche generali e i dati completi
+   - Gestione Duplicati: identifica e rimuovi record duplicati
+   - Calcolo Presenze per Percorso: visualizza e scarica report delle presenze per percorso formativo
+
+## Formato del file Excel
+Il file Excel dovrebbe contenere almeno le seguenti colonne:
+- `CodiceFiscale`: identificativo univoco dello studente
+- `DataPresenza`: data della presenza
+- `OraPresenza`: orario della presenza
+- `DenominazionePercorso`: percorso formativo associato alla presenza (l'app gestisce automaticamente varianti con "art. 13")
+
+Colonne opzionali ma utili:
+- `Nome`: nome dello studente
+- `Cognome`: cognome dello studente

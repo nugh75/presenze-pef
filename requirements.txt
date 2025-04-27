@@ -1,0 +1,7 @@
+# Gestione Presenze - Requirements
+# File contenente le dipendenze necessarie per l'applicazione
+
+streamlit==1.44.1
+pandas==2.2.3
+openpyxl==3.1.5
+matplotlib==3.8.4
