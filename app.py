@@ -18,6 +18,19 @@ def normalize_generic(name):
     if not isinstance(name, str): return name
     normalized = re.sub(r'\s*\(?art\.?\s*13\.?\)?.*$', '', name, flags=re.IGNORECASE)
     return normalized.strip()
+    
+def reposition_code_to_front(text):
+    """Prende il testo, estrae il codice tra parentesi (es. (A-30)) e lo riposiziona all'inizio della stringa."""
+    if not isinstance(text, str): return text
+    match = re.search(r'\(([-\w]+)\)', text)  # Cerca codice alfanumerico con trattini tra parentesi
+    if match:
+        code = match.group(1).strip()
+        # Rimuovi il codice con le parentesi dal testo originale
+        cleaned_text = re.sub(r'\s*\(' + re.escape(code) + r'\)\s*', ' ', text).strip()
+        # Restituisci il codice all'inizio seguito dal testo pulito
+        return f"[{code}] {cleaned_text}"
+    return text
+    
 def transform_by_codice_percorso(codice, default_name):
     if pd.isna(codice): return default_name
     codice_str = str(codice).strip();
@@ -51,7 +64,10 @@ def load_data(uploaded_file):
             if col not in df.columns: st.error(f"Colonna obbligatoria '{col}' non trovata."); return None
         df['CodiceFiscale'] = df['CodiceFiscale'].astype(str).str.strip()
         percorso_col_original_name = 'percoro' if 'percoro' in df.columns else 'DenominazionePercorso'
-        df['PercorsoOriginaleInternal'] = df[percorso_col_original_name]; df['PercorsoOriginaleSenzaArt13Internal'] = df['PercorsoOriginaleInternal'].apply(normalize_generic)
+        df['PercorsoOriginaleInternal'] = df[percorso_col_original_name]
+        df['PercorsoOriginaleSenzaArt13Internal'] = df['PercorsoOriginaleInternal'].apply(normalize_generic)
+        # Applica la trasformazione per spostare i codici all'inizio
+        df['PercorsoOriginaleSenzaArt13Internal'] = df['PercorsoOriginaleSenzaArt13Internal'].apply(reposition_code_to_front)
         if 'CodicePercorso' in df.columns: df['PercorsoInternal'] = df.apply(lambda row: transform_by_codice_percorso(row.get('CodicePercorso'), row['PercorsoOriginaleSenzaArt13Internal']), axis=1)
         else: df['PercorsoInternal'] = df['PercorsoOriginaleSenzaArt13Internal']
         if 'DenominazioneCds' in df.columns: st.warning("'DenominazioneCds' trovata. Verrà ignorata/rimossa."); df = df.drop(columns=['DenominazioneCds'], errors='ignore')
@@ -220,7 +236,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
         cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'TimestampPresenza']
         cols_show_exist = [col for col in cols_show_preferred if col in df_main.columns]
         st.dataframe(df_main[cols_show_exist], use_container_width=True)
-        st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 (usato per fogli export e filtro Tab3). PercorsoInternal: Elaborato/Trasformato.")
+        st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 con codice riposizionato all'inizio [Codice] (usato per fogli export e filtro Tab3). PercorsoInternal: Elaborato/Trasformato.")
 
     # --- Tab 2: Gestione Duplicati --- (Invariata da v2.6)
     with tab2:
@@ -355,7 +371,16 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                 else:
                     try:
                         # --- Filtro Percorso ---
+                        # Prepara la lista di percorsi per il selettore, garantendo che i codici siano visualizzati all'inizio
                         perc_list = sorted([str(p) for p in attendance_df[p_col_disp_key].unique() if pd.notna(p)])
+                        # Ordina percorsi in base ai codici tra parentesi quadre se presenti
+                        def extract_sort_key(percorso_str):
+                            code_match = re.search(r'^\[([-\w]+)\]', percorso_str)
+                            if code_match:
+                                return code_match.group(1)  # Estrai solo il codice per ordinamento
+                            return percorso_str  # Usa l'intera stringa altrimenti
+                            
+                        perc_list = sorted(perc_list, key=extract_sort_key)
                         perc_sel = st.selectbox(f"1. Filtra per {p_col_disp_key}:", ["Tutti"] + perc_list, key="filt_perc_tab3_v7")
 
                         # Inizializza variabili per dati filtrati
@@ -522,10 +547,22 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                     else:
                                         prog_bar = st.progress(0, text="Creazione fogli...")
                                         for i, course_value in enumerate(unique_courses):
-                                            extracted_code = extract_code_from_parentheses(course_value)
-                                            if extracted_code: sheet_name_cleaned = clean_sheet_name(extracted_code)
-                                            else: sheet_name_cleaned = clean_sheet_name(course_value); st.caption(f"Nota: Codice non trovato per '{course_value}', usato nome completo.")
-                                            prog_text = f"Foglio: {sheet_name_cleaned} ({i+1}/{len(unique_courses)})"; prog_bar.progress((i + 1) / len(unique_courses), text=prog_text)
+                                            # Cerca prima per il nuovo formato [codice]
+                                            code_match = re.search(r'^\[([-\w]+)\]', course_value)
+                                            if code_match:
+                                                extracted_code = code_match.group(1)
+                                                sheet_name_cleaned = clean_sheet_name(extracted_code)
+                                            else:
+                                                # Fallback al metodo precedente di estrazione dalle parentesi
+                                                extracted_code = extract_code_from_parentheses(course_value)
+                                                if extracted_code: 
+                                                    sheet_name_cleaned = clean_sheet_name(extracted_code)
+                                                else: 
+                                                    sheet_name_cleaned = clean_sheet_name(course_value)
+                                                    st.caption(f"Nota: Codice non trovato per '{course_value}', usato nome completo.")
+                                            
+                                            prog_text = f"Foglio: {sheet_name_cleaned} ({i+1}/{len(unique_courses)})"; 
+                                            prog_bar.progress((i + 1) / len(unique_courses), text=prog_text)
                                             df_sheet = current_df_for_tab3[current_df_for_tab3[course_col_export] == course_value].copy()
                                             if df_sheet.empty: st.write(f"Info: Nessun dato per '{sheet_name_cleaned}', foglio saltato."); continue
                                             
@@ -600,7 +637,8 @@ else:
         *   **Esporta in Excel:** 
             - Seleziona e ordina le colonne desiderate
             - Scegli un periodo di date per l'esportazione (opzionale)
-            - Genera file **dettagliato**, un foglio per codice percorso **estratto dalle parentesi**
+            - Genera file **dettagliato**, un foglio per codice percorso **estratto e mostrato all'inizio [Codice]** 
+            - I percorsi mostrano ora il codice all'inizio nel formato [A-30] Nome Percorso
 
     ### Formato File Suggerito
     *   `CodiceFiscale`, `DataPresenza`, `OraPresenza`, `DenominazionePercorso` (o `percoro`) - Obbligatori
@@ -609,4 +647,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("### Gestione Presenze - Versione beta 1") # Aggiorna versione
+st.markdown("### Gestione Presenze - Versione beta 1.1") # Aggiorna versione - aggiunto codice percorso all'inizio
