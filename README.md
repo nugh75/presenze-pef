@@ -7,10 +7,12 @@ Questa applicazione Streamlit permette di gestire le presenze di un corso, con p
 
 ## Funzionalità Principali
 - **Normalizzazione dei percorsi formativi**: L'app rimuove automaticamente la dicitura "art. 13" (e varianti) dai nomi dei percorsi per considerarli equivalenti
-- **Visualizzazione dati**: È possibile visualizzare sia i nomi originali dei percorsi che quelli normalizzati
+- **Riposizionamento codici percorso**: I codici percorso tra parentesi (es: A-30) vengono estratti e riposizionati all'inizio della stringa in formato [A-30]
+- **Visualizzazione dati**: È possibile visualizzare sia i nomi originali dei percorsi che quelli normalizzati con codici in evidenza
 - **Filtro per percorso**: Permette di filtrare le presenze per percorso formativo specifico
 - **Identificazione duplicati**: Trova e gestisce record duplicati con tempi simili (entro 10 minuti)
 - **Reportistica**: Genera report scaricabili con le presenze per percorso formativo
+- **Filtro per periodo**: Permette di selezionare un intervallo di date per l'esportazione
 
 ## Requisiti
 - Python 3.6+
