@@ -217,36 +217,61 @@ def detect_duplicate_records(df, timestamp_col='TimestampPresenza', cf_column='C
     duplicates_df = duplicates_df.sort_values(by=['GruppoDuplicati', timestamp_col]); valid_indices_to_drop = [idx for idx in indices_to_drop_suggestion if idx in df.index]
     return duplicates_df, valid_involved_indices, valid_indices_to_drop
 
-# --- Funzione Calcolo Presenze Aggregate --- (Modificata per includere CFU)
+# --- Funzione Calcolo Presenze Aggregate --- (Modificata per sommare i CFU)
 def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='PercorsoOriginaleSenzaArt13Internal', percorso_elab_col='PercorsoInternal', original_col='PercorsoOriginaleInternal'):
     if df is None or len(df) == 0: return pd.DataFrame()
     required_cols = [cf_column, percorso_chiave_col]; optional_cols = [percorso_elab_col, original_col]
     name_cols = [col for col in ['Nome', 'Cognome'] if col in df.columns]
     if not all(col in df.columns for col in required_cols):
-        missing = [col for col in required_cols if col not in df.columns]; st.error(f"Colonne chiave ({', '.join(missing)}) mancanti."); return pd.DataFrame()
+        missing = [col for col in required_cols if col not in df.columns]; st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing)})"); return pd.DataFrame()
     
-    # Includi anche la colonna CFU se presente
-    additional_cols = []
-    if 'CFU' in df.columns:
-        additional_cols.append('CFU')
-    
+    # Prepara le colonne necessarie per l'aggregazione
     group_cols = [cf_column, percorso_chiave_col]
-    first_cols = name_cols + additional_cols + [col for col in optional_cols if col in df.columns and col != percorso_chiave_col]
+    
+    # Separa i CFU dalle altre colonne per poterli sommare
+    cfu_column = 'CFU'
+    has_cfu = cfu_column in df.columns
+    
+    # Ottieni le altre colonne che saranno aggregate con first()
+    first_cols = name_cols + [col for col in optional_cols if col in df.columns and col != percorso_chiave_col]
+    
+    # Calcola il conteggio delle presenze
     attendance_counts = df.groupby(group_cols, dropna=False).size().reset_index(name='Presenze')
     
+    # Crea il dataframe di base con le informazioni generali
     if first_cols:
          first_info_values = df.dropna(subset=first_cols, how='all').groupby(group_cols, as_index=False)[first_cols].first()
          attendance = pd.merge(attendance_counts, first_info_values, on=group_cols, how='left')
-    else: attendance = attendance_counts
+    else: 
+         attendance = attendance_counts
     
+    # Se abbiamo i CFU, calcoliamo la somma per ogni gruppo e li aggiungiamo al dataframe
+    if has_cfu:
+        # Converti i valori di CFU a numeri per assicurare che possano essere sommati
+        df_cfu = df.copy()
+        df_cfu[cfu_column] = pd.to_numeric(df_cfu[cfu_column], errors='coerce').fillna(0)
+        
+        # Calcola la somma dei CFU per ciascun gruppo
+        cfu_sums = df_cfu.groupby(group_cols, dropna=False)[cfu_column].sum().reset_index()
+        cfu_sums = cfu_sums.rename(columns={cfu_column: 'CFU Totali'})
+        
+        # Unisci la somma dei CFU con il dataframe principale
+        attendance = pd.merge(attendance, cfu_sums, on=group_cols, how='left')
+        
+        # Rimuovi la vecchia colonna CFU se presente (che contiene solo il primo valore)
+        if 'CFU' in attendance.columns:
+            attendance = attendance.drop(columns=['CFU'])
+    
+    # Rinomina le colonne come prima
     rename_map = {percorso_chiave_col: 'Percorso (Senza Art.13)', percorso_elab_col: 'Percorso Elaborato (Info)', original_col: 'Percorso Originale Input (Info)'}
     attendance = attendance.rename(columns={k: v for k, v in rename_map.items() if k in attendance.columns})
     
+    # Riordina le colonne come prima
     cols_order_final = [cf_column] + [col for col in ['Nome', 'Cognome'] if col in attendance.columns] + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if rename_map.get(col, col) in attendance.columns]
     
-    # Aggiungi CFU prima di Presenze nella visualizzazione
-    if 'CFU' in attendance.columns:
-        cols_order_final.append('CFU')
+    # Aggiungi CFU Totali prima di Presenze nella visualizzazione
+    if 'CFU Totali' in attendance.columns:
+        cols_order_final.append('CFU Totali')
     
     cols_order_final.append('Presenze')
     final_cols = [c for c in cols_order_final if c in attendance.columns]; attendance = attendance[final_cols]
@@ -514,7 +539,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                 else: # Percorso selezionato, ma tutti gli studenti
                                     st.subheader(f"Riepilogo Aggregato per: {perc_sel}")
 
-                                cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', p_col_disp_key, 'Percorso Elaborato (Info)', 'CFU', 'Presenze']
+                                cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', p_col_disp_key, 'Percorso Elaborato (Info)', 'CFU Totali', 'Presenze']
                                 cols_disp_agg_exist = [c for c in cols_disp_agg if c in df_to_display_agg.columns]
                                 sort_agg_by = [p_col_disp_key, 'Cognome', 'Nome'] if perc_sel == "Tutti" else ['Cognome', 'Nome']
                                 # Assicura che le colonne di sort esistano
@@ -558,7 +583,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                     st.caption("Usa il box qui sotto per scegliere le colonne. Puoi trascinare le colonne selezionate per cambiarne l'ordine.")
 
                     all_possible_cols = current_df_for_tab3.columns.tolist(); internal_cols_to_exclude = ['TimestampPresenza']; all_exportable_cols = [col for col in all_possible_cols if col not in internal_cols_to_exclude]
-                    default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','CFU','Cognome','Nome','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal']
+                    default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal','CFU']
                     default_cols_final = [col for col in default_cols_export_ordered if col in all_exportable_cols]
 
                     st.markdown("**Esempio Record Dati (prima riga):**")
@@ -729,4 +754,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("### Gestione Presenze - Versione beta 1.1") # Aggiorna versione - aggiunto codice percorso all'inizio
+st.markdown("### Gestione Presenze - Versione beta 1.2") # Aggiorna versione - aggiunto codice percorso all'inizio
