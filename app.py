@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, date, time
 import os
 import re
 from io import BytesIO
+import difflib  # Aggiunto per confrontare stringhe simili
 
 # --- Configurazione Pagina ---
 st.set_page_config(
@@ -51,12 +52,62 @@ def extract_code_from_parentheses(text):
         if code: return code
     return None
 
-# --- Funzione Caricamento Dati --- (Invariata da v2.6)
+# --- Funzione per caricare i CFU ---
+@st.cache_data
+def load_cfu_data():
+    """Carica i dati dei CFU dal file 'crediti.csv'."""
+    try:
+        cfu_df = pd.read_csv('crediti.csv')
+        if 'DenominazioneAttività' not in cfu_df.columns or 'CFU' not in cfu_df.columns:
+            st.error("Il file dei CFU non contiene le colonne richieste: 'DenominazioneAttività' e 'CFU'.")
+            return pd.DataFrame()
+        # Normalizza i nomi delle attività per facilitare il matching
+        cfu_df['DenominazioneAttivitaNormalizzata'] = cfu_df['DenominazioneAttività'].apply(lambda x: x.strip() if isinstance(x, str) else x)
+        return cfu_df
+    except Exception as e:
+        st.error(f"Errore durante il caricamento del file dei CFU: {e}")
+        return pd.DataFrame()
+
+def match_activity_with_cfu(activity_name, cfu_data):
+    """Abbina un'attività con il suo CFU dal dataset dei CFU.
+    Gestisce differenze minori nei nomi delle attività, ignorando maiuscole/minuscole."""
+    if not isinstance(activity_name, str) or activity_name.strip() == '' or cfu_data.empty:
+        return None
+    
+    # Normalizza il nome dell'attività (strip e lowercase)
+    normalized_activity = activity_name.strip().lower()
+    
+    # Confronto case-insensitive
+    for idx, row in cfu_data.iterrows():
+        if row['DenominazioneAttivitaNormalizzata'].lower() == normalized_activity:
+            return row['CFU']
+    
+    # Se non trova un match esatto case-insensitive, cerca il più simile
+    similarity_threshold = 0.9  # Soglia di similarità (90%)
+    activities = cfu_data['DenominazioneAttivitaNormalizzata'].tolist()
+    activities_lower = [act.lower() for act in activities if isinstance(act, str)]
+    
+    # Usa difflib per trovare il match più simile (case-insensitive)
+    matches = difflib.get_close_matches(normalized_activity, activities_lower, n=1, cutoff=similarity_threshold)
+    if matches:
+        closest_match_lower = matches[0]
+        # Trova l'indice corrispondente nell'array originale
+        for idx, act in enumerate(activities):
+            if isinstance(act, str) and act.lower() == closest_match_lower:
+                return cfu_data.iloc[idx]['CFU']
+    
+    return None
+
+# --- Funzione Caricamento Dati --- (Modificata per includere CFU)
 @st.cache_data
 def load_data(uploaded_file):
-    # ... (codice load_data invariato) ...
     if uploaded_file is None: return None
     try:
+        # Carica i dati dei CFU
+        cfu_data = load_cfu_data()
+        if cfu_data.empty:
+            st.warning("Non è stato possibile caricare i dati dei CFU. I CFU non saranno disponibili.")
+        
         df = pd.read_excel(uploaded_file); original_columns = df.columns.tolist()
         required_cols = ['CodiceFiscale', 'DataPresenza', 'OraPresenza']
         if not ('percoro' in df.columns or 'DenominazionePercorso' in df.columns): st.error("Colonna Percorso ('percoro' o 'DenominazionePercorso') non trovata."); return None
@@ -72,7 +123,20 @@ def load_data(uploaded_file):
         else: df['PercorsoInternal'] = df['PercorsoOriginaleSenzaArt13Internal']
         if 'DenominazioneCds' in df.columns: st.warning("'DenominazioneCds' trovata. Verrà ignorata/rimossa."); df = df.drop(columns=['DenominazioneCds'], errors='ignore')
         activity_col_norm_internal = 'DenominazioneAttivitaNormalizzataInternal'
-        if 'DenominazioneAttività' in df.columns: df[activity_col_norm_internal] = df['DenominazioneAttività'].apply(normalize_generic)
+        if 'DenominazioneAttività' in df.columns: 
+            df[activity_col_norm_internal] = df['DenominazioneAttività'].apply(normalize_generic)
+            
+            # Aggiungi colonna CFU abbinando le attività
+            if not cfu_data.empty:
+                st.info("Abbinamento dei CFU alle attività in corso...")
+                df['CFU'] = df['DenominazioneAttività'].apply(lambda x: match_activity_with_cfu(x, cfu_data))
+                # Conta quante attività non hanno trovato un match per i CFU
+                missing_cfu = df['CFU'].isna().sum()
+                total_activities = len(df)
+                if missing_cfu > 0:
+                    st.warning(f"Non è stato possibile trovare i CFU per {missing_cfu} attività su {total_activities} ({(missing_cfu/total_activities)*100:.1f}%).")
+            else:
+                df['CFU'] = None
         try: df['DataPresenza'] = pd.to_datetime(df['DataPresenza'], errors='coerce').dt.date; df.loc[pd.isna(df['DataPresenza']), 'DataPresenza'] = pd.NaT
         except Exception as e: st.warning(f"Problema conversione 'DataPresenza': {e}."); df['DataPresenza'] = pd.NaT if 'DataPresenza' not in df.columns else df['DataPresenza']
         try:
@@ -105,6 +169,7 @@ def load_data(uploaded_file):
         if 'DenominazioneAttività' in df.columns: final_cols.append('DenominazioneAttività')
         if activity_col_norm_internal in df.columns: final_cols.append(activity_col_norm_internal)
         if 'CodicePercorso' in original_columns and 'CodicePercorso' in df.columns: final_cols.append('CodicePercorso')
+        if 'CFU' in df.columns: final_cols.append('CFU')  # Aggiungi la colonna CFU all'elenco delle colonne da mantenere
         cols_to_keep = [col for col in final_cols if col in df.columns]; df_final = df[cols_to_keep].copy()
         return df_final
     except Exception as e: st.error(f"Errore critico caricamento/elaborazione file: {e}"); st.exception(e); return None
@@ -152,26 +217,43 @@ def detect_duplicate_records(df, timestamp_col='TimestampPresenza', cf_column='C
     duplicates_df = duplicates_df.sort_values(by=['GruppoDuplicati', timestamp_col]); valid_indices_to_drop = [idx for idx in indices_to_drop_suggestion if idx in df.index]
     return duplicates_df, valid_involved_indices, valid_indices_to_drop
 
-# --- Funzione Calcolo Presenze Aggregate --- (Corretta con pd.merge - v2.15)
+# --- Funzione Calcolo Presenze Aggregate --- (Modificata per includere CFU)
 def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='PercorsoOriginaleSenzaArt13Internal', percorso_elab_col='PercorsoInternal', original_col='PercorsoOriginaleInternal'):
-    # ... (codice funzione invariato) ...
     if df is None or len(df) == 0: return pd.DataFrame()
     required_cols = [cf_column, percorso_chiave_col]; optional_cols = [percorso_elab_col, original_col]
     name_cols = [col for col in ['Nome', 'Cognome'] if col in df.columns]
     if not all(col in df.columns for col in required_cols):
         missing = [col for col in required_cols if col not in df.columns]; st.error(f"Colonne chiave ({', '.join(missing)}) mancanti."); return pd.DataFrame()
-    group_cols = [cf_column, percorso_chiave_col]; first_cols = name_cols + [col for col in optional_cols if col in df.columns and col != percorso_chiave_col]
+    
+    # Includi anche la colonna CFU se presente
+    additional_cols = []
+    if 'CFU' in df.columns:
+        additional_cols.append('CFU')
+    
+    group_cols = [cf_column, percorso_chiave_col]
+    first_cols = name_cols + additional_cols + [col for col in optional_cols if col in df.columns and col != percorso_chiave_col]
     attendance_counts = df.groupby(group_cols, dropna=False).size().reset_index(name='Presenze')
+    
     if first_cols:
          first_info_values = df.dropna(subset=first_cols, how='all').groupby(group_cols, as_index=False)[first_cols].first()
          attendance = pd.merge(attendance_counts, first_info_values, on=group_cols, how='left')
     else: attendance = attendance_counts
+    
     rename_map = {percorso_chiave_col: 'Percorso (Senza Art.13)', percorso_elab_col: 'Percorso Elaborato (Info)', original_col: 'Percorso Originale Input (Info)'}
     attendance = attendance.rename(columns={k: v for k, v in rename_map.items() if k in attendance.columns})
-    cols_order_final = [cf_column] + [col for col in ['Nome', 'Cognome'] if col in attendance.columns] + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if rename_map.get(col, col) in attendance.columns] + ['Presenze']
+    
+    cols_order_final = [cf_column] + [col for col in ['Nome', 'Cognome'] if col in attendance.columns] + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if rename_map.get(col, col) in attendance.columns]
+    
+    # Aggiungi CFU prima di Presenze nella visualizzazione
+    if 'CFU' in attendance.columns:
+        cols_order_final.append('CFU')
+    
+    cols_order_final.append('Presenze')
     final_cols = [c for c in cols_order_final if c in attendance.columns]; attendance = attendance[final_cols]
+    
     if 'Nome' in attendance.columns: attendance['Nome'] = attendance['Nome'].fillna('')
     if 'Cognome' in attendance.columns: attendance['Cognome'] = attendance['Cognome'].fillna('')
+    
     return attendance
 
 # --- Layout Principale ---
@@ -233,10 +315,10 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
         for label, value in metrics_data.items():
             with cols_metrics[i]: st.metric(label, value) ; i += 1
         st.subheader("Dati Attuali Utilizzati per l'Analisi")
-        cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'TimestampPresenza']
+        cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'CFU', 'TimestampPresenza']
         cols_show_exist = [col for col in cols_show_preferred if col in df_main.columns]
         st.dataframe(df_main[cols_show_exist], use_container_width=True)
-        st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 con codice riposizionato all'inizio [Codice] (usato per fogli export e filtro Tab3). PercorsoInternal: Elaborato/Trasformato.")
+        st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 con codice riposizionato all'inizio [Codice] (usato per fogli export e filtro Tab3). PercorsoInternal: Elaborato/Trasformato. CFU: Crediti Formativi Universitari associati all'attività.")
 
     # --- Tab 2: Gestione Duplicati --- (Invariata da v2.6)
     with tab2:
@@ -328,7 +410,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
             with st.expander("📄 Scarica Report Tutti i Duplicati Identificati (Prima della rimozione)"):
                  duplicates_df_display_orig = st.session_state.duplicate_detection_results[0]
                  if not duplicates_df_display_orig.empty:
-                     cols_show_dup_preferred = ['GruppoDuplicati', 'CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal','PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'SuggerisciRimuovere', 'TimestampPresenza']
+                     cols_show_dup_preferred = ['GruppoDuplicati', 'CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal','PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'CFU', 'SuggerisciRimuovere', 'TimestampPresenza']
                      cols_show_dup_exist = [c for c in cols_show_dup_preferred if c in duplicates_df_display_orig.columns]
                      if 'GruppoDuplicati' not in duplicates_df_display_orig.columns: duplicates_df_display_orig['GruppoDuplicati'] = 0
                      duplicates_csv_orig = duplicates_df_display_orig[cols_show_dup_exist].to_csv(index=True, index_label='OriginalIndex').encode('utf-8')
@@ -432,7 +514,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                 else: # Percorso selezionato, ma tutti gli studenti
                                     st.subheader(f"Riepilogo Aggregato per: {perc_sel}")
 
-                                cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', p_col_disp_key, 'Percorso Elaborato (Info)', 'Presenze']
+                                cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', p_col_disp_key, 'Percorso Elaborato (Info)', 'CFU', 'Presenze']
                                 cols_disp_agg_exist = [c for c in cols_disp_agg if c in df_to_display_agg.columns]
                                 sort_agg_by = [p_col_disp_key, 'Cognome', 'Nome'] if perc_sel == "Tutti" else ['Cognome', 'Nome']
                                 # Assicura che le colonne di sort esistano
@@ -449,7 +531,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                             else:
                                  st.subheader(f"Dettaglio Record Presenze per: {perc_sel} - {stud_sel}")
 
-                            cols_disp_detail = ['CodiceFiscale', 'Cognome', 'Nome', 'DataPresenza', 'OraPresenza', 'DenominazioneAttività', 'PercorsoInternal']
+                            cols_disp_detail = ['CodiceFiscale', 'Cognome', 'Nome', 'DataPresenza', 'OraPresenza', 'DenominazioneAttività', 'CFU', 'PercorsoInternal']
                             cols_disp_detail_exist = [c for c in cols_disp_detail if c in df_to_display_detail.columns]
                             sort_by_columns = ['Cognome', 'Nome']
                             if perc_sel == "Tutti": sort_by_columns.insert(0, p_col_internal_key)
@@ -476,7 +558,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                     st.caption("Usa il box qui sotto per scegliere le colonne. Puoi trascinare le colonne selezionate per cambiarne l'ordine.")
 
                     all_possible_cols = current_df_for_tab3.columns.tolist(); internal_cols_to_exclude = ['TimestampPresenza']; all_exportable_cols = [col for col in all_possible_cols if col not in internal_cols_to_exclude]
-                    default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal']
+                    default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','CFU','Cognome','Nome','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal']
                     default_cols_final = [col for col in default_cols_export_ordered if col in all_exportable_cols]
 
                     st.markdown("**Esempio Record Dati (prima riga):**")
