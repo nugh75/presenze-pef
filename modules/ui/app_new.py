@@ -6,7 +6,6 @@ from io import BytesIO
 
 # Importazione dei moduli
 from modules.data_loader import load_data
-# Importazione diretta dai moduli tab invece che dal pacchetto ui
 from modules.ui.tab1 import render_tab1
 from modules.ui.tab2 import render_tab2
 from modules.ui.tab3 import render_tab3
