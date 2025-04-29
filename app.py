@@ -281,6 +281,56 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
     
     return attendance
 
+# --- Funzione Calcolo Frequenza Lezioni ---
+def calculate_lesson_attendance(df, date_filter=None, activity_filter=None, cf_column='CodiceFiscale', date_col='DataPresenza', activity_col='DenominazioneAttivitaNormalizzataInternal'):
+    """
+    Calcola il numero di partecipanti unici per ogni combinazione di data e attività.
+    
+    Args:
+        df: DataFrame con i dati delle presenze
+        date_filter: Data specifica da filtrare (opzionale)
+        activity_filter: Attività specifica da filtrare (opzionale)
+        cf_column: Nome della colonna contenente i codici fiscali
+        date_col: Nome della colonna contenente le date
+        activity_col: Nome della colonna contenente le attività normalizzate
+    
+    Returns:
+        DataFrame con il conteggio dei partecipanti per combinazione data-attività
+    """
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+    
+    required_cols = [cf_column, date_col, activity_col]
+    if not all(col in df.columns for col in required_cols):
+        missing = [col for col in required_cols if col not in df.columns]
+        st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing)})")
+        return pd.DataFrame()
+    
+    # Creazione di una copia del DataFrame per il filtraggio
+    filtered_df = df.copy()
+    
+    # Applicazione dei filtri se specificati
+    if date_filter is not None and date_filter != "Tutte le date":
+        filtered_df = filtered_df[filtered_df[date_col] == date_filter]
+    
+    if activity_filter is not None and activity_filter != "Tutte le attività":
+        filtered_df = filtered_df[filtered_df[activity_col] == activity_filter]
+    
+    if filtered_df.empty:
+        return pd.DataFrame()
+    
+    # Raggruppamento per data e attività, conteggio dei CF unici
+    attendance_counts = (filtered_df.groupby([date_col, activity_col], dropna=False)
+                          .agg({cf_column: 'nunique'})
+                          .reset_index()
+                          .rename(columns={cf_column: 'Partecipanti'}))
+    
+    # Ordinamento per data e poi per attività
+    if not attendance_counts.empty:
+        attendance_counts = attendance_counts.sort_values(by=[date_col, activity_col])
+    
+    return attendance_counts
+
 # --- Layout Principale ---
 st.title("📊 Gestione Presenze Corsi")
 st.markdown("<a id='top'></a>", unsafe_allow_html=True)
@@ -324,7 +374,7 @@ df_main = st.session_state.get('processed_df', None)
 
 # --- Tabs ---
 if df_main is not None and isinstance(df_main, pd.DataFrame):
-    tab1, tab2, tab3 = st.tabs(["Analisi Dati", "Gestione Duplicati", "Calcolo Presenze ed Esportazione"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Analisi Dati", "Gestione Duplicati", "Calcolo Presenze ed Esportazione", "Frequenza Lezioni"])
 
     # --- Tab 1: Analisi Dati --- (Invariata da v2.6)
     with tab1:
@@ -730,6 +780,135 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
         else:
              st.info("Nessun dato valido caricato.")
 
+    # --- Tab 4: Frequenza Lezioni ---
+    with tab4:
+        st.header("Frequenza Lezioni")
+        st.write("Visualizza il numero di partecipanti unici per ogni combinazione di data e attività. Puoi filtrare i risultati per data e/o per attività.")
+
+        current_df_for_tab4 = st.session_state.get('processed_df', pd.DataFrame())
+
+        if not current_df_for_tab4.empty:
+            date_col = 'DataPresenza'
+            activity_col = 'DenominazioneAttivitaNormalizzataInternal'
+            cf_col = 'CodiceFiscale'
+
+            required_cols = [date_col, activity_col, cf_col]
+            if not all(col in current_df_for_tab4.columns for col in required_cols):
+                missing_cols = [col for col in required_cols if col not in current_df_for_tab4.columns]
+                st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing_cols)})")
+            else:
+                st.subheader("Filtri")
+                
+                # Creazione di due colonne per i filtri indipendenti
+                col1, col2 = st.columns(2)
+                
+                # Filtro per data
+                with col1:
+                    # Ottieni tutte le date uniche e ordinate
+                    unique_dates = sorted(current_df_for_tab4[date_col].unique())
+                    date_filter = st.selectbox(
+                        "Filtra per data:",
+                        ["Tutte le date"] + [d for d in unique_dates if pd.notna(d)],
+                        key="date_filter_tab4"
+                    )
+                
+                # Filtro per attività
+                with col2:
+                    # Ottieni tutte le attività uniche e ordinate alfabeticamente
+                    unique_activities = sorted([a for a in current_df_for_tab4[activity_col].unique() if isinstance(a, str) and a.strip()])
+                    activity_filter = st.selectbox(
+                        "Filtra per attività:",
+                        ["Tutte le attività"] + unique_activities,
+                        key="activity_filter_tab4"
+                    )
+                
+                # Calcola e visualizza i dati sulla frequenza delle lezioni
+                if date_filter == "Tutte le date" and activity_filter == "Tutte le attività":
+                    st.subheader("Frequenza per tutte le lezioni")
+                elif date_filter != "Tutte le date" and activity_filter == "Tutte le attività":
+                    st.subheader(f"Frequenza per le lezioni del {date_filter}")
+                elif date_filter == "Tutte le date" and activity_filter != "Tutte le attività":
+                    st.subheader(f"Frequenza per l'attività: {activity_filter}")
+                else:
+                    st.subheader(f"Frequenza per l'attività: {activity_filter} del {date_filter}")
+                
+                # Gestisci i parametri dei filtri
+                date_param = date_filter if date_filter != "Tutte le date" else None
+                activity_param = activity_filter if activity_filter != "Tutte le attività" else None
+                
+                # Calcola i dati della frequenza
+                attendance_data = calculate_lesson_attendance(
+                    current_df_for_tab4,
+                    date_filter=date_param,
+                    activity_filter=activity_param,
+                    date_col=date_col,
+                    activity_col=activity_col,
+                    cf_column=cf_col
+                )
+                
+                # Visualizza i risultati
+                if not attendance_data.empty:
+                    # Rinomina le colonne per la visualizzazione
+                    display_cols = {
+                        date_col: 'Data',
+                        activity_col: 'Attività',
+                        'Partecipanti': 'Partecipanti'
+                    }
+                    attendance_display = attendance_data.rename(columns=display_cols)
+                    
+                    # Visualizza la tabella con i dati
+                    st.dataframe(attendance_display, use_container_width=True)
+                    
+                    # Aggiunta di statistiche riepilogative
+                    st.subheader("Statistiche")
+                    col_stats1, col_stats2, col_stats3 = st.columns(3)
+                    
+                    with col_stats1:
+                        total_lessons = len(attendance_data)
+                        st.metric("Numero di lezioni", total_lessons)
+                    
+                    with col_stats2:
+                        if not attendance_data.empty:
+                            avg_attendance = round(attendance_data['Partecipanti'].mean(), 1)
+                            st.metric("Media partecipanti", avg_attendance)
+                    
+                    with col_stats3:
+                        if not attendance_data.empty:
+                            total_attendance = attendance_data['Partecipanti'].sum()
+                            st.metric("Totale presenze", total_attendance)
+                    
+                    # Esportazione in CSV
+                    st.divider()
+                    st.subheader("Esportazione dati")
+                    
+                    if st.button("Esporta dati visualizzati in CSV", key="export_lesson_attendance"):
+                        csv = attendance_display.to_csv(index=False).encode('utf-8')
+                        
+                        # Crea un nome file significativo in base ai filtri applicati
+                        filename_parts = ["Frequenza_Lezioni"]
+                        if date_param:
+                            date_str = str(date_param).replace("-", "")
+                            filename_parts.append(f"Data_{date_str}")
+                        if activity_param:
+                            # Normalizza il nome dell'attività per il filename
+                            activity_str = activity_param.replace(" ", "_").replace("/", "-")[:30]
+                            filename_parts.append(f"Attivita_{activity_str}")
+                        
+                        ts = datetime.now().strftime("%Y%m%d_%H%M")
+                        filename = f"{'_'.join(filename_parts)}_{ts}.csv"
+                        
+                        st.download_button(
+                            label="📥 Scarica CSV",
+                            data=csv,
+                            file_name=filename,
+                            mime="text/csv",
+                            key="download_lesson_attendance"
+                        )
+                else:
+                    st.info("Nessun dato disponibile per i filtri selezionati.")
+        else:
+            st.info("Nessun dato valido caricato.")
+
 # Messaggio iniziale se nessun file caricato
 else:
     st.info("👈 Per iniziare, carica un file Excel dalla barra laterale.")
@@ -746,6 +925,11 @@ else:
             - Scegli un periodo di date per l'esportazione (opzionale)
             - Genera file **dettagliato**, un foglio per codice percorso **estratto e mostrato all'inizio [Codice]** 
             - I percorsi mostrano ora il codice all'inizio nel formato [A-30] Nome Percorso
+    6.  **Frequenza Lezioni (Tab 4):**
+        *   Visualizza il numero di partecipanti unici per ogni combinazione di **Data** e **Attività**.
+        *   Filtra per **Data** e/o **Attività** in modo indipendente.
+        *   Consulta le **Statistiche** di frequenza (numero lezioni, media partecipanti, totale presenze).
+        *   **Esporta in CSV** i dati visualizzati.
 
     ### Formato File Suggerito
     *   `CodiceFiscale`, `DataPresenza`, `OraPresenza`, `DenominazionePercorso` (o `percoro`) - Obbligatori
@@ -754,4 +938,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("### Gestione Presenze - Versione beta 1.2") # Aggiorna versione - aggiunto codice percorso all'inizio
+st.markdown("### Gestione Presenze - Versione beta 1.3") # Aggiorna versione - aggiunto tab Frequenza Lezioni
