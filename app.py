@@ -1200,9 +1200,22 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                             participants_df = participants_df.sort_values(by=['Cognome', 'Nome', 'CodiceFiscale'])
                             participants_df = participants_df.drop_duplicates(subset=['CodiceFiscale'])
                             
-                            # Seleziona solo le colonne necessarie
-                            display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email']
+                            # Seleziona solo le colonne necessarie, inclusi i percorsi
+                            display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email', 'PercorsoInternal', 'PercorsoOriginaleSenzaArt13Internal']
                             columns_to_show = [col for col in display_columns if col in participants_df.columns]
+                            
+                            # Rinomina le colonne dei percorsi per una migliore visualizzazione
+                            rename_map = {}
+                            if 'PercorsoInternal' in columns_to_show:
+                                rename_map['PercorsoInternal'] = 'Percorso Elaborato'
+                            if 'PercorsoOriginaleSenzaArt13Internal' in columns_to_show:
+                                rename_map['PercorsoOriginaleSenzaArt13Internal'] = 'Percorso Originale'
+                            
+                            # Applica la rinomina se necessario
+                            if rename_map:
+                                participants_df = participants_df.rename(columns=rename_map)
+                                # Aggiorna i nomi delle colonne per visualizzazione
+                                columns_to_show = [rename_map.get(col, col) for col in columns_to_show]
                             
                             if columns_to_show:
                                 # Visualizza la tabella con i dati dei partecipanti
@@ -1225,6 +1238,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                 
                                 with export_col1:
                                     if st.button("Esporta in CSV", key="export_participants_csv"):
+                                        # Usa le colonne rinominate per l'esportazione
                                         participants_csv = participants_df[columns_to_show].to_csv(index=False).encode('utf-8')
                                         filename_csv = f"{'_'.join(parts)}_{ts}.csv"
                                         
@@ -1240,6 +1254,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                     if st.button("Esporta in Excel", key="export_participants_excel"):
                                         output = BytesIO()
                                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                            # Usa le colonne rinominate per l'esportazione
                                             participants_df[columns_to_show].to_excel(writer, sheet_name="Lista Partecipanti", index=False)
                                         
                                         output.seek(0)
