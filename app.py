@@ -98,7 +98,7 @@ def match_activity_with_cfu(activity_name, cfu_data):
     
     return None
 
-# --- Funzione Caricamento Dati --- (Modificata per includere CFU)
+# --- Funzione Caricamento Dati --- (Modificata per includere CFU ed Email)
 @st.cache_data
 def load_data(uploaded_file):
     if uploaded_file is None: return None
@@ -114,6 +114,15 @@ def load_data(uploaded_file):
         for col in required_cols:
             if col not in df.columns: st.error(f"Colonna obbligatoria '{col}' non trovata."); return None
         df['CodiceFiscale'] = df['CodiceFiscale'].astype(str).str.strip()
+        
+        # Gestione della colonna Email
+        if 'recapito_ateneo' in df.columns:
+            df['Email'] = df['recapito_ateneo']
+            st.success("Email caricate dalla colonna 'recapito_ateneo'")
+        else:
+            st.warning("Colonna 'recapito_ateneo' per le email non trovata nel file. Le email non saranno disponibili.")
+            df['Email'] = ''
+            
         percorso_col_original_name = 'percoro' if 'percoro' in df.columns else 'DenominazionePercorso'
         df['PercorsoOriginaleInternal'] = df[percorso_col_original_name]
         df['PercorsoOriginaleSenzaArt13Internal'] = df['PercorsoOriginaleInternal'].apply(normalize_generic)
@@ -165,7 +174,7 @@ def load_data(uploaded_file):
         if removed_rows > 0: st.warning(f"Rimossi {removed_rows} record con CF, Data, Ora o Timestamp mancanti/non validi.")
         if 'Nome' not in df.columns: df['Nome'] = '';
         if 'Cognome' not in df.columns: df['Cognome'] = ''
-        final_cols = ['CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'TimestampPresenza']
+        final_cols = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'TimestampPresenza']
         if 'DenominazioneAttività' in df.columns: final_cols.append('DenominazioneAttività')
         if activity_col_norm_internal in df.columns: final_cols.append(activity_col_norm_internal)
         if 'CodicePercorso' in original_columns and 'CodicePercorso' in df.columns: final_cols.append('CodicePercorso')
@@ -217,33 +226,78 @@ def detect_duplicate_records(df, timestamp_col='TimestampPresenza', cf_column='C
     duplicates_df = duplicates_df.sort_values(by=['GruppoDuplicati', timestamp_col]); valid_indices_to_drop = [idx for idx in indices_to_drop_suggestion if idx in df.index]
     return duplicates_df, valid_involved_indices, valid_indices_to_drop
 
-# --- Funzione Calcolo Presenze Aggregate --- (Modificata per sommare i CFU)
-def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='PercorsoOriginaleSenzaArt13Internal', percorso_elab_col='PercorsoInternal', original_col='PercorsoOriginaleInternal'):
-    if df is None or len(df) == 0: return pd.DataFrame()
-    required_cols = [cf_column, percorso_chiave_col]; optional_cols = [percorso_elab_col, original_col]
-    name_cols = [col for col in ['Nome', 'Cognome'] if col in df.columns]
-    if not all(col in df.columns for col in required_cols):
-        missing = [col for col in required_cols if col not in df.columns]; st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing)})"); return pd.DataFrame()
+# --- Funzione Calcolo Presenze Aggregate --- (Modificata per sommare i CFU e supportare diversi raggruppamenti)
+def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='PercorsoOriginaleSenzaArt13Internal', percorso_elab_col='PercorsoInternal', original_col='PercorsoOriginaleInternal', group_by="studente"):
+    """
+    Calcola le presenze aggregate in base al criterio specificato.
     
-    # Prepara le colonne necessarie per l'aggregazione
-    group_cols = [cf_column, percorso_chiave_col]
+    Args:
+        df: DataFrame con i dati delle presenze
+        cf_column: Nome della colonna per il codice fiscale
+        percorso_chiave_col: Nome della colonna per il percorso chiave (senza Art.13)
+        percorso_elab_col: Nome della colonna per il percorso elaborato
+        original_col: Nome della colonna per il percorso originale
+        group_by: Criterio di raggruppamento ("studente", "percorso_originale", "percorso_elaborato", "lista_studenti")
+    
+    Returns:
+        DataFrame con i dati aggregati in base al criterio specificato
+    """
+    if df is None or len(df) == 0: return pd.DataFrame()
+    required_cols = [cf_column]
+    if group_by in ["studente", "lista_studenti"]:
+        required_cols.append(percorso_chiave_col)
+    optional_cols = [percorso_elab_col, original_col] if group_by != "percorso_elaborato" else [original_col]
+    name_cols = [col for col in ['Nome', 'Cognome', 'Email'] if col in df.columns]
+    
+    if not all(col in df.columns for col in required_cols):
+        missing = [col for col in required_cols if col not in df.columns]
+        st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing)})")
+        return pd.DataFrame()
+    
+    # Definisci i gruppi in base al criterio selezionato
+    if group_by == "studente":
+        # Raggruppa per studente e percorso
+        group_cols = [cf_column, percorso_chiave_col]
+    elif group_by == "percorso_originale":
+        # Raggruppa solo per percorso originale
+        group_cols = [percorso_chiave_col]
+        if percorso_chiave_col not in df.columns:
+            st.error(f"Impossibile procedere: colonna {percorso_chiave_col} mancante")
+            return pd.DataFrame()
+    elif group_by == "percorso_elaborato":
+        # Raggruppa solo per percorso elaborato
+        group_cols = [percorso_elab_col]
+        if percorso_elab_col not in df.columns:
+            st.error(f"Impossibile procedere: colonna {percorso_elab_col} mancante")
+            return pd.DataFrame()
+    elif group_by == "lista_studenti":
+        # Lista degli studenti senza raggruppare per percorso
+        group_cols = [cf_column]
+    else:
+        st.error(f"Criterio di raggruppamento non valido: {group_by}")
+        return pd.DataFrame()
     
     # Separa i CFU dalle altre colonne per poterli sommare
     cfu_column = 'CFU'
     has_cfu = cfu_column in df.columns
     
     # Ottieni le altre colonne che saranno aggregate con first()
-    first_cols = name_cols + [col for col in optional_cols if col in df.columns and col != percorso_chiave_col]
+    if group_by == "studente" or group_by == "lista_studenti":
+        # Per raggruppamento per studente, includi nome e cognome
+        first_cols = name_cols + [col for col in optional_cols if col in df.columns and col not in group_cols]
+    else:
+        # Per raggruppamenti per percorso, non includere nome e cognome
+        first_cols = [col for col in optional_cols if col in df.columns and col not in group_cols]
     
     # Calcola il conteggio delle presenze
     attendance_counts = df.groupby(group_cols, dropna=False).size().reset_index(name='Presenze')
     
     # Crea il dataframe di base con le informazioni generali
-    if first_cols:
-         first_info_values = df.dropna(subset=first_cols, how='all').groupby(group_cols, as_index=False)[first_cols].first()
-         attendance = pd.merge(attendance_counts, first_info_values, on=group_cols, how='left')
+    if first_cols and (group_by == "studente" or group_by == "lista_studenti"):
+        first_info_values = df.dropna(subset=first_cols, how='all').groupby(group_cols, as_index=False)[first_cols].first()
+        attendance = pd.merge(attendance_counts, first_info_values, on=group_cols, how='left')
     else: 
-         attendance = attendance_counts
+        attendance = attendance_counts
     
     # Se abbiamo i CFU, calcoliamo la somma per ogni gruppo e li aggiungiamo al dataframe
     if has_cfu:
@@ -262,22 +316,48 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
         if 'CFU' in attendance.columns:
             attendance = attendance.drop(columns=['CFU'])
     
-    # Rinomina le colonne come prima
-    rename_map = {percorso_chiave_col: 'Percorso (Senza Art.13)', percorso_elab_col: 'Percorso Elaborato (Info)', original_col: 'Percorso Originale Input (Info)'}
+    # Rinomina le colonne in base al raggruppamento
+    if group_by == "studente" or group_by == "lista_studenti":
+        rename_map = {
+            percorso_chiave_col: 'Percorso (Senza Art.13)', 
+            percorso_elab_col: 'Percorso Elaborato (Info)', 
+            original_col: 'Percorso Originale Input (Info)'
+        }
+    elif group_by == "percorso_originale":
+        rename_map = {
+            percorso_chiave_col: 'Percorso (Senza Art.13)'
+        }
+    elif group_by == "percorso_elaborato":
+        rename_map = {
+            percorso_elab_col: 'Percorso Elaborato'
+        }
+    
     attendance = attendance.rename(columns={k: v for k, v in rename_map.items() if k in attendance.columns})
     
-    # Riordina le colonne come prima
-    cols_order_final = [cf_column] + [col for col in ['Nome', 'Cognome'] if col in attendance.columns] + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if rename_map.get(col, col) in attendance.columns]
+    # Ordina le colonne in base al raggruppamento
+    if group_by == "studente":
+        cols_order_final = [cf_column] + name_cols + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if col in attendance.columns]
+    elif group_by == "lista_studenti":
+        cols_order_final = [cf_column] + name_cols
+    elif group_by == "percorso_originale":
+        cols_order_final = [rename_map.get(percorso_chiave_col, percorso_chiave_col)]
+    elif group_by == "percorso_elaborato":
+        cols_order_final = [rename_map.get(percorso_elab_col, percorso_elab_col)]
     
     # Aggiungi CFU Totali prima di Presenze nella visualizzazione
     if 'CFU Totali' in attendance.columns:
         cols_order_final.append('CFU Totali')
     
     cols_order_final.append('Presenze')
-    final_cols = [c for c in cols_order_final if c in attendance.columns]; attendance = attendance[final_cols]
     
+    # Seleziona solo le colonne esistenti e in ordine
+    final_cols = [c for c in cols_order_final if c in attendance.columns]
+    attendance = attendance[final_cols]
+    
+    # Riempie i valori nulli in nome e cognome
     if 'Nome' in attendance.columns: attendance['Nome'] = attendance['Nome'].fillna('')
     if 'Cognome' in attendance.columns: attendance['Cognome'] = attendance['Cognome'].fillna('')
+    if 'Email' in attendance.columns: attendance['Email'] = attendance['Email'].fillna('')
     
     return attendance
 
@@ -390,7 +470,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
         for label, value in metrics_data.items():
             with cols_metrics[i]: st.metric(label, value) ; i += 1
         st.subheader("Dati Attuali Utilizzati per l'Analisi")
-        cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'CFU', 'TimestampPresenza']
+        cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 'DataPresenza', 'OraPresenza', 'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 'CodicePercorso', 'CFU', 'TimestampPresenza']
         cols_show_exist = [col for col in cols_show_preferred if col in df_main.columns]
         st.dataframe(df_main[cols_show_exist], use_container_width=True)
         st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 con codice riposizionato all'inizio [Codice] (usato per fogli export e filtro Tab3). PercorsoInternal: Elaborato/Trasformato. CFU: Crediti Formativi Universitari associati all'attività.")
@@ -496,7 +576,7 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
              else: st.success("✅ Nessun record potenzialmente duplicato trovato.")
 
 
-    # --- Tab 3: Calcolo Presenze ed Esportazione (Fix Indentazione + UI Semplificata) ---
+    # --- Tab 3: Calcolo Presenze ed Esportazione (Con analisi per percorso e lista studenti) ---
     with tab3:
         st.header("Calcolo Presenze ed Esportazione")
         st.write("Visualizza presenze per **Percorso (Senza Art.13)** e permette export dettagliato in Excel (fogli divisi per codice percorso).")
@@ -511,33 +591,191 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                  st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing_cols)})")
                  attendance_df = pd.DataFrame() # Resetta per sicurezza
             else:
-                 # Calcola dati aggregati (necessario per il selectbox)
-                 attendance_df = calculate_attendance(current_df_for_tab3)
+                # Aggiungiamo le opzioni di visualizzazione
+                st.subheader("Seleziona Tipo di Visualizzazione")
+                view_options = [
+                    "1. Presenze per Studente e Percorso", 
+                    "2. Riassunto per Percorso Originale (PercorsoOriginaleSenzaArt13Internal)",
+                    "3. Riassunto per Percorso Elaborato (PercorsoInternal)", 
+                    "4. Lista Completa Studenti"
+                ]
+                view_type = st.radio("Scegli cosa visualizzare:", view_options, key="view_type_tab3")
+                
+                # Determina il tipo di raggruppamento in base alla selezione
+                if "1. Presenze per Studente" in view_type:
+                    group_by = "studente"
+                    attendance_df = calculate_attendance(current_df_for_tab3, group_by=group_by)
+                elif "2. Riassunto per Percorso Originale" in view_type:
+                    group_by = "percorso_originale"
+                    attendance_df = calculate_attendance(current_df_for_tab3, group_by=group_by)
+                    st.info("Visualizzazione dei totali parziali per Percorso Originale senza Art.13.")
+                elif "3. Riassunto per Percorso Elaborato" in view_type:
+                    group_by = "percorso_elaborato"
+                    attendance_df = calculate_attendance(current_df_for_tab3, group_by=group_by, percorso_elab_col='PercorsoInternal')
+                    st.info("Visualizzazione dei totali parziali per Percorso Elaborato (Info).")
+                elif "4. Lista Completa" in view_type:
+                    group_by = "lista_studenti"
+                    attendance_df = calculate_attendance(current_df_for_tab3, group_by=group_by)
+                    st.info("Lista completa degli studenti con tutte le presenze aggregate.")
+                
+                # Se stiamo visualizzando per studente e percorso, mostra i filtri standard
+                if group_by == "studente" and not attendance_df.empty:
+                    st.subheader("Filtra Visualizzazione")
+                    p_col_disp_key = "Percorso (Senza Art.13)"
+                    p_col_internal_key = 'PercorsoOriginaleSenzaArt13Internal'
 
-            # --- Visualizzazione Condizionale ---
-            if not attendance_df.empty:
-                st.subheader("Filtra Visualizzazione")
-                p_col_disp_key = "Percorso (Senza Art.13)"
-                p_col_internal_key = 'PercorsoOriginaleSenzaArt13Internal'
-
-                if p_col_disp_key not in attendance_df.columns:
-                     st.error(f"Colonna chiave '{p_col_disp_key}' non trovata nei dati aggregati.")
-                elif p_col_internal_key not in current_df_for_tab3.columns:
-                     st.error(f"Colonna chiave interna '{p_col_internal_key}' non trovata nei dati dettagliati.")
-                # CORREZIONE: Questo else deve coprire tutto il blocco try/except successivo
-                else:
-                    try:
-                        # --- Filtro Percorso ---
-                        # Prepara la lista di percorsi per il selettore, garantendo che i codici siano visualizzati all'inizio
-                        perc_list = sorted([str(p) for p in attendance_df[p_col_disp_key].unique() if pd.notna(p)])
-                        # Ordina percorsi in base ai codici tra parentesi quadre se presenti
-                        def extract_sort_key(percorso_str):
-                            code_match = re.search(r'^\[([-\w]+)\]', percorso_str)
-                            if code_match:
-                                return code_match.group(1)  # Estrai solo il codice per ordinamento
-                            return percorso_str  # Usa l'intera stringa altrimenti
+                # Gestione dei casi di raggruppamento specifici
+                if group_by in ["percorso_originale", "percorso_elaborato", "lista_studenti"]:
+                    if not attendance_df.empty:
+                        if group_by == "percorso_originale":
+                            st.subheader("Totali Parziali per Percorso Originale (senza Art.13)")
+                            # Ordina per presenze in ordine decrescente
+                            attendance_df_sorted = attendance_df.sort_values(by="Presenze", ascending=False)
+                            st.dataframe(attendance_df_sorted, use_container_width=True)
                             
-                        perc_list = sorted(perc_list, key=extract_sort_key)
+                            # Esportazione dei dati
+                            st.subheader("Esportazione")
+                            export_col1, export_col2 = st.columns(2)
+                            
+                            with export_col1:
+                                if st.button("Esporta in CSV", key="export_percorso_orig_csv"):
+                                    csv = attendance_df_sorted.to_csv(index=False).encode('utf-8')
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    st.download_button(
+                                        label="📥 Scarica CSV",
+                                        data=csv,
+                                        file_name=f"Totali_Percorso_Originale_{ts}.csv",
+                                        mime="text/csv",
+                                        key="download_percorso_orig_csv"
+                                    )
+                            
+                            with export_col2:
+                                if st.button("Esporta in Excel", key="export_percorso_orig_excel"):
+                                    output = BytesIO()
+                                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                        attendance_df_sorted.to_excel(writer, sheet_name="Totali Percorso Originale", index=False)
+                                    output.seek(0)
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    st.download_button(
+                                        label="📥 Scarica Excel",
+                                        data=output,
+                                        file_name=f"Totali_Percorso_Originale_{ts}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key="download_percorso_orig_excel"
+                                    )
+                                
+                        elif group_by == "percorso_elaborato":
+                            st.subheader("Totali Parziali per Percorso Elaborato")
+                            # Ordina per presenze in ordine decrescente
+                            attendance_df_sorted = attendance_df.sort_values(by="Presenze", ascending=False)
+                            st.dataframe(attendance_df_sorted, use_container_width=True)
+                            
+                            # Esportazione dei dati
+                            st.subheader("Esportazione")
+                            export_col1, export_col2 = st.columns(2)
+                            
+                            with export_col1:
+                                if st.button("Esporta in CSV", key="export_percorso_elab_csv"):
+                                    csv = attendance_df_sorted.to_csv(index=False).encode('utf-8')
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    st.download_button(
+                                        label="📥 Scarica CSV",
+                                        data=csv,
+                                        file_name=f"Totali_Percorso_Elaborato_{ts}.csv",
+                                        mime="text/csv",
+                                        key="download_percorso_elab_csv"
+                                    )
+                            
+                            with export_col2:
+                                if st.button("Esporta in Excel", key="export_percorso_elab_excel"):
+                                    output = BytesIO()
+                                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                        attendance_df_sorted.to_excel(writer, sheet_name="Totali Percorso Elaborato", index=False)
+                                    output.seek(0)
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    st.download_button(
+                                        label="📥 Scarica Excel",
+                                        data=output,
+                                        file_name=f"Totali_Percorso_Elaborato_{ts}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key="download_percorso_elab_excel"
+                                    )
+                                
+                        elif group_by == "lista_studenti":
+                            st.subheader("Lista Completa degli Studenti")
+                            
+                            # Aggiungi opzione di ricerca/filtro per la lista studenti
+                            search_term = st.text_input("Cerca per nome, cognome o codice fiscale:", key="search_student_list")
+                            
+                            # Ordina alfabeticamente per cognome e nome
+                            attendance_df_sorted = attendance_df.sort_values(by=["Cognome", "Nome"])
+                            
+                            # Applica filtro se necessario
+                            if search_term:
+                                search_term_lower = search_term.lower()
+                                filtered_df = attendance_df_sorted[
+                                    attendance_df_sorted["Cognome"].str.lower().str.contains(search_term_lower, na=False) |
+                                    attendance_df_sorted["Nome"].str.lower().str.contains(search_term_lower, na=False) |
+                                    attendance_df_sorted["CodiceFiscale"].str.lower().str.contains(search_term_lower, na=False)
+                                ]
+                                st.dataframe(filtered_df, use_container_width=True)
+                                st.info(f"Trovati {len(filtered_df)} studenti su {len(attendance_df_sorted)} totali.")
+                            else:
+                                st.dataframe(attendance_df_sorted, use_container_width=True)
+                            
+                            # Esportazione della lista degli studenti
+                            st.subheader("Esportazione")
+                            export_col1, export_col2 = st.columns(2)
+                            
+                            with export_col1:
+                                if st.button("Esporta in CSV", key="export_students_list_csv"):
+                                    csv = attendance_df_sorted.to_csv(index=False).encode('utf-8')
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    st.download_button(
+                                        label="📥 Scarica CSV",
+                                        data=csv,
+                                        file_name=f"Lista_Completa_Studenti_{ts}.csv",
+                                        mime="text/csv",
+                                        key="download_students_list_csv"
+                                    )
+                            
+                            with export_col2:
+                                if st.button("Esporta in Excel", key="export_students_list_excel"):
+                                    output = BytesIO()
+                                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                        attendance_df_sorted.to_excel(writer, sheet_name="Lista Studenti", index=False)
+                                    output.seek(0)
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    st.download_button(
+                                        label="📥 Scarica Excel",
+                                        data=output,
+                                        file_name=f"Lista_Completa_Studenti_{ts}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key="download_students_list_excel"
+                                    )
+                else:
+                    # La vecchia logica per il filtraggio per studente e percorso
+                    if p_col_disp_key not in attendance_df.columns:
+                         st.error(f"Colonna chiave '{p_col_disp_key}' non trovata nei dati aggregati.")
+                    elif p_col_internal_key not in current_df_for_tab3.columns:
+                         st.error(f"Colonna chiave interna '{p_col_internal_key}' non trovata nei dati dettagliati.")
+                    # CORREZIONE: Questo else deve coprire tutto il blocco try/except successivo
+                    else:
+                        try:
+                            # --- Filtro Percorso ---
+                            # Prepara la lista di percorsi per il selettore, garantendo che i codici siano visualizzati all'inizio
+                            perc_list = sorted([str(p) for p in attendance_df[p_col_disp_key].unique() if pd.notna(p)])
+                             # Ordina percorsi in base ai codici tra parentesi quadre se presenti
+                            def extract_sort_key(percorso_str):
+                                code_match = re.search(r'^\[([-\w]+)\]', percorso_str)
+                                if code_match:
+                                    return code_match.group(1)  # Estrai solo il codice per ordinamento
+                                return percorso_str  # Usa l'intera stringa altrimenti
+                            
+                            perc_list = sorted(perc_list, key=extract_sort_key)
+                        except Exception as e:
+                            st.error(f"Errore nella preparazione dei filtri: {e}")
+                            perc_list = []
                         perc_sel = st.selectbox(f"1. Filtra per {p_col_disp_key}:", ["Tutti"] + perc_list, key="filt_perc_tab3_v7")
 
                         # Inizializza variabili per dati filtrati
@@ -581,44 +819,44 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
 
                         st.divider()
 
-                        # --- Visualizzazione Tabelle ---
-                        if not df_to_display_agg.empty:
-                            if perc_sel == "Tutti" or stud_sel == "Tutti gli Studenti":
+                        try:
+                            # --- Visualizzazione Tabelle ---
+                            if not df_to_display_agg.empty:
+                                if perc_sel == "Tutti" or stud_sel == "Tutti gli Studenti":
+                                    if perc_sel == "Tutti":
+                                        st.subheader("Riepilogo Aggregato per Tutti i Percorsi e Studenti")
+                                    else: # Percorso selezionato, ma tutti gli studenti
+                                        st.subheader(f"Riepilogo Aggregato per: {perc_sel}")
+
+                                    cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', p_col_disp_key, 'Percorso Elaborato (Info)', 'CFU Totali', 'Presenze']
+                                    cols_disp_agg_exist = [c for c in cols_disp_agg if c in df_to_display_agg.columns]
+                                    sort_agg_by = [p_col_disp_key, 'Cognome', 'Nome'] if perc_sel == "Tutti" else ['Cognome', 'Nome']
+                                    # Assicura che le colonne di sort esistano
+                                    valid_sort_agg_by = [c for c in sort_agg_by if c in df_to_display_agg.columns]
+                                    if valid_sort_agg_by:
+                                        st.dataframe(df_to_display_agg[cols_disp_agg_exist].sort_values(by=valid_sort_agg_by), use_container_width=True)
+                                    else:
+                                         st.dataframe(df_to_display_agg[cols_disp_agg_exist], use_container_width=True) # Fallback senza sort
+
+
+                            if not df_to_display_detail.empty:
                                 if perc_sel == "Tutti":
-                                    st.subheader("Riepilogo Aggregato per Tutti i Percorsi e Studenti")
-                                else: # Percorso selezionato, ma tutti gli studenti
-                                    st.subheader(f"Riepilogo Aggregato per: {perc_sel}")
-
-                                cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', p_col_disp_key, 'Percorso Elaborato (Info)', 'CFU Totali', 'Presenze']
-                                cols_disp_agg_exist = [c for c in cols_disp_agg if c in df_to_display_agg.columns]
-                                sort_agg_by = [p_col_disp_key, 'Cognome', 'Nome'] if perc_sel == "Tutti" else ['Cognome', 'Nome']
-                                # Assicura che le colonne di sort esistano
-                                valid_sort_agg_by = [c for c in sort_agg_by if c in df_to_display_agg.columns]
-                                if valid_sort_agg_by:
-                                    st.dataframe(df_to_display_agg[cols_disp_agg_exist].sort_values(by=valid_sort_agg_by), use_container_width=True)
+                                     st.subheader("Dettaglio Record Presenze per Tutti i Percorsi")
                                 else:
-                                     st.dataframe(df_to_display_agg[cols_disp_agg_exist], use_container_width=True) # Fallback senza sort
+                                     st.subheader(f"Dettaglio Record Presenze per: {perc_sel} - {stud_sel}")
 
-
-                        if not df_to_display_detail.empty:
-                            if perc_sel == "Tutti":
-                                 st.subheader("Dettaglio Record Presenze per Tutti i Percorsi")
+                                cols_disp_detail = ['CodiceFiscale', 'Cognome', 'Nome', 'Email', 'DataPresenza', 'OraPresenza', 'DenominazioneAttività', 'CFU', 'PercorsoInternal']
+                                cols_disp_detail_exist = [c for c in cols_disp_detail if c in df_to_display_detail.columns]
+                                sort_by_columns = ['Cognome', 'Nome']
+                                if perc_sel == "Tutti": sort_by_columns.insert(0, p_col_internal_key)
+                                if 'DataPresenza' in df_to_display_detail.columns: sort_by_columns.append('DataPresenza')
+                                if 'OraPresenza' in df_to_display_detail.columns: sort_by_columns.append('OraPresenza')
+                                valid_sort_by = [col for col in sort_by_columns if col in df_to_display_detail.columns]
+                                if not valid_sort_by: st.dataframe(df_to_display_detail[cols_disp_detail_exist], use_container_width=True)
+                                else: st.dataframe(df_to_display_detail[cols_disp_detail_exist].sort_values(by=valid_sort_by), use_container_width=True)
                             else:
-                                 st.subheader(f"Dettaglio Record Presenze per: {perc_sel} - {stud_sel}")
-
-                            cols_disp_detail = ['CodiceFiscale', 'Cognome', 'Nome', 'DataPresenza', 'OraPresenza', 'DenominazioneAttività', 'CFU', 'PercorsoInternal']
-                            cols_disp_detail_exist = [c for c in cols_disp_detail if c in df_to_display_detail.columns]
-                            sort_by_columns = ['Cognome', 'Nome']
-                            if perc_sel == "Tutti": sort_by_columns.insert(0, p_col_internal_key)
-                            if 'DataPresenza' in df_to_display_detail.columns: sort_by_columns.append('DataPresenza')
-                            if 'OraPresenza' in df_to_display_detail.columns: sort_by_columns.append('OraPresenza')
-                            valid_sort_by = [col for col in sort_by_columns if col in df_to_display_detail.columns]
-                            if not valid_sort_by: st.dataframe(df_to_display_detail[cols_disp_detail_exist], use_container_width=True)
-                            else: st.dataframe(df_to_display_detail[cols_disp_detail_exist].sort_values(by=valid_sort_by), use_container_width=True)
-                        else:
-                             if perc_sel != "Tutti": st.info("Nessun record dettagliato da mostrare per la selezione corrente.")
-
-                    except Exception as e: st.error(f"Errore durante la visualizzazione: {e}")
+                                 if perc_sel != "Tutti": st.info("Nessun record dettagliato da mostrare per la selezione corrente.")
+                        except Exception as e: st.error(f"Errore durante la visualizzazione: {e}")
 
                 # --- Esportazione Excel Multi-Tab (Invariata da v2.15) ---
                 # Questo blocco deve essere allineato con 'if not attendance_df.empty:'
@@ -628,12 +866,12 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                 if course_col_export not in current_df_for_tab3.columns:
                     st.error(f"Colonna chiave '{course_col_export}' non trovata.")
                 else:
-                    st.write(f"Esporta dati **dettagliati** in Excel, un foglio per ogni **{course_col_export}** unico (nome foglio da codice tra parentesi).")
+                    st.write(f"Esporta dati **dettagliati** in Excel o CSV, con opzione multi-foglio Excel per ogni **{course_col_export}** unico (nome foglio da codice tra parentesi).")
                     st.markdown("**1. Seleziona e Ordina le Colonne per l'Export:**")
                     st.caption("Usa il box qui sotto per scegliere le colonne. Puoi trascinare le colonne selezionate per cambiarne l'ordine.")
 
                     all_possible_cols = current_df_for_tab3.columns.tolist(); internal_cols_to_exclude = ['TimestampPresenza']; all_exportable_cols = [col for col in all_possible_cols if col not in internal_cols_to_exclude]
-                    default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal','CFU']
+                    default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Email','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal','CFU']
                     default_cols_final = [col for col in default_cols_export_ordered if col in all_exportable_cols]
 
                     st.markdown("**Esempio Record Dati (prima riga):**")
@@ -692,10 +930,15 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                         
                         st.info(date_filter_text)
                     
-                    if st.button("Genera ed Esporta File Excel", key="export_excel_ordered_v215"):
-                        if not selected_cols_export_ordered: st.warning("Seleziona almeno una colonna.")
-                        else:
-                            overall_success = True; sheets_written = 0; error_messages = []
+                    # Creazione delle colonne per i pulsanti di esportazione
+                    export_col1, export_col2 = st.columns(2)
+                    
+                    # Pulsante per generare ed esportare file Excel
+                    with export_col1:
+                        if st.button("Genera ed Esporta File Excel", key="export_excel_ordered_v215"):
+                            if not selected_cols_export_ordered: st.warning("Seleziona almeno una colonna.")
+                            else:
+                                overall_success = True; sheets_written = 0; error_messages = []
                             try:
                                 output = BytesIO()
                                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -771,12 +1014,73 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                                 st.download_button(label="📥 Scarica Report Excel Dettaglio", data=output, file_name=fname, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_excel_course_ordered_v215")
                             elif sheets_written == 0 and overall_success: st.warning("Nessun dato trovato per alcun percorso. File Excel non generato.")
                             else:
-                                st.error("Generazione file Excel fallita o nessun foglio valido scritto.")
+                                st.error("Generazione file Excel fallita o nessun foglio valido scritto.");
                                 if error_messages: st.warning("Dettaglio errori:"); [st.caption(msg) for msg in error_messages]
+                    
+                    # Pulsante per generare ed esportare file CSV
+                    with export_col2:
+                        if st.button("Genera ed Esporta File CSV", key="export_csv_ordered_v215"):
+                            if not selected_cols_export_ordered: st.warning("Seleziona almeno una colonna.")
+                            else:
+                                # Filtra i dati in base al periodo se selezionato
+                                filtered_df = current_df_for_tab3.copy()
+                                date_filtered = False
+                                
+                                if 'export_start_date' in st.session_state and st.session_state.export_start_date is not None and 'DataPresenza' in filtered_df.columns:
+                                    start_date = st.session_state.export_start_date
+                                    filtered_df = filtered_df[filtered_df['DataPresenza'] >= start_date]
+                                    date_filtered = True
+                                
+                                if 'export_end_date' in st.session_state and st.session_state.export_end_date is not None and 'DataPresenza' in filtered_df.columns:
+                                    end_date = st.session_state.export_end_date
+                                    filtered_df = filtered_df[filtered_df['DataPresenza'] <= end_date]
+                                    date_filtered = True
+                                
+                                if filtered_df.empty:
+                                    st.warning("Nessun dato disponibile per il periodo selezionato.")
+                                else:
+                                    # Prendi solo le colonne selezionate
+                                    final_ordered_cols = [col for col in selected_cols_export_ordered if col in filtered_df.columns]
+                                    
+                                    if not final_ordered_cols:
+                                        st.warning("Nessuna delle colonne selezionate è presente nei dati.")
+                                    else:
+                                        # Prepara il CSV con le colonne selezionate e rinominate
+                                        df_export = filtered_df[final_ordered_cols]
+                                        rename_map = {'PercorsoInternal': 'Tipo Percorso', 
+                                                    'PercorsoOriginaleInternal': 'Percorso Originale Input', 
+                                                    'PercorsoOriginaleSenzaArt13Internal': 'Denominazione Percorso', 
+                                                    'DenominazioneAttivitaNormalizzataInternal': 'Attività Elaborata'}
+                                        cols_to_rename = {k: v for k, v in rename_map.items() if k in df_export.columns}
+                                        df_export = df_export.rename(columns=cols_to_rename)
+                                        
+                                        # Esporta in CSV
+                                        csv_data = df_export.to_csv(index=False).encode('utf-8')
+                                        ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                        
+                                        # Aggiungi informazioni sul periodo al nome del file
+                                        period_info = ""
+                                        if 'export_start_date' in st.session_state and st.session_state.export_start_date is not None:
+                                            start_str = st.session_state.export_start_date.strftime("%Y%m%d")
+                                            period_info += f"_dal{start_str}"
+                                        if 'export_end_date' in st.session_state and st.session_state.export_end_date is not None:
+                                            end_str = st.session_state.export_end_date.strftime("%Y%m%d")
+                                            period_info += f"_al{end_str}"
+                                        
+                                        fname_csv = f"Report_Presenze_Dettaglio{period_info}_{ts}.csv"
+                                        st.success(f"File CSV generato con {len(filtered_df)} record!")
+                                        st.download_button(
+                                            label="📥 Scarica Report CSV",
+                                            data=csv_data,
+                                            file_name=fname_csv,
+                                            mime="text/csv",
+                                            key="dl_csv_ordered_v215"
+                                        )
 
-            # Questo else si riferisce a 'if not attendance_df.empty:'
-            else:
-                st.info("Nessun dato di presenza aggregato da visualizzare (verifica i dati o le colonne necessarie).")
+                if not attendance_df.empty:
+                    pass  # Il blocco 'if' precedente conteneva già tutto il codice necessario
+                else:  # if attendance_df.empty
+                    st.info("Nessun dato di presenza aggregato da visualizzare (verifica i dati o le colonne necessarie).")
         else:
              st.info("Nessun dato valido caricato.")
 
@@ -877,33 +1181,129 @@ if df_main is not None and isinstance(df_main, pd.DataFrame):
                             total_attendance = attendance_data['Partecipanti'].sum()
                             st.metric("Totale presenze", total_attendance)
                     
-                    # Esportazione in CSV
+                    # Aggiungi lista partecipanti per lezione specifica
+                    st.divider()
+                    if date_param is not None or activity_param is not None:
+                        st.subheader("Lista dei Partecipanti")
+                        
+                        # Filtra i dati per ottenere i partecipanti alla lezione selezionata
+                        participants_df = current_df_for_tab4.copy()
+                        
+                        if date_param is not None:
+                            participants_df = participants_df[participants_df[date_col] == date_param]
+                        
+                        if activity_param is not None:
+                            participants_df = participants_df[participants_df[activity_col] == activity_param]
+                        
+                        if not participants_df.empty:
+                            # Estrai solo i record unici per ogni persona
+                            participants_df = participants_df.sort_values(by=['Cognome', 'Nome', 'CodiceFiscale'])
+                            participants_df = participants_df.drop_duplicates(subset=['CodiceFiscale'])
+                            
+                            # Seleziona solo le colonne necessarie
+                            display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email']
+                            columns_to_show = [col for col in display_columns if col in participants_df.columns]
+                            
+                            if columns_to_show:
+                                # Visualizza la tabella con i dati dei partecipanti
+                                st.dataframe(participants_df[columns_to_show], use_container_width=True)
+                                st.info(f"Partecipanti totali: {len(participants_df)}")
+                                
+                                # Aggiungi opzione per esportare la lista dei partecipanti
+                                st.subheader("Esporta lista partecipanti")
+                                export_col1, export_col2 = st.columns(2)
+                                
+                                # Crea nome file
+                                parts = ["Partecipanti"]
+                                if date_param:
+                                    parts.append(f"Data_{str(date_param).replace('-', '')}")
+                                if activity_param:
+                                    activity_safe = activity_param.replace(" ", "_").replace("/", "-")[:30]
+                                    parts.append(f"Attivita_{activity_safe}")
+                                
+                                ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                
+                                with export_col1:
+                                    if st.button("Esporta in CSV", key="export_participants_csv"):
+                                        participants_csv = participants_df[columns_to_show].to_csv(index=False).encode('utf-8')
+                                        filename_csv = f"{'_'.join(parts)}_{ts}.csv"
+                                        
+                                        st.download_button(
+                                            label="📥 Scarica CSV",
+                                            data=participants_csv,
+                                            file_name=filename_csv,
+                                            mime="text/csv",
+                                            key="download_participants_list_csv"
+                                        )
+                                
+                                with export_col2:
+                                    if st.button("Esporta in Excel", key="export_participants_excel"):
+                                        output = BytesIO()
+                                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                            participants_df[columns_to_show].to_excel(writer, sheet_name="Lista Partecipanti", index=False)
+                                        
+                                        output.seek(0)
+                                        filename_excel = f"{'_'.join(parts)}_{ts}.xlsx"
+                                        
+                                        st.download_button(
+                                            label="📥 Scarica Excel",
+                                            data=output,
+                                            file_name=filename_excel,
+                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                            key="download_participants_list_excel"
+                                        )
+                            else:
+                                st.warning("Dati anagrafici non disponibili per i partecipanti.")
+                        else:
+                            st.info("Nessun partecipante trovato per la selezione corrente.")
+                    
+                    # Esportazione dati
                     st.divider()
                     st.subheader("Esportazione dati")
                     
-                    if st.button("Esporta dati visualizzati in CSV", key="export_lesson_attendance"):
-                        csv = attendance_display.to_csv(index=False).encode('utf-8')
-                        
-                        # Crea un nome file significativo in base ai filtri applicati
-                        filename_parts = ["Frequenza_Lezioni"]
-                        if date_param:
-                            date_str = str(date_param).replace("-", "")
-                            filename_parts.append(f"Data_{date_str}")
-                        if activity_param:
-                            # Normalizza il nome dell'attività per il filename
-                            activity_str = activity_param.replace(" ", "_").replace("/", "-")[:30]
-                            filename_parts.append(f"Attivita_{activity_str}")
-                        
-                        ts = datetime.now().strftime("%Y%m%d_%H%M")
-                        filename = f"{'_'.join(filename_parts)}_{ts}.csv"
-                        
-                        st.download_button(
-                            label="📥 Scarica CSV",
-                            data=csv,
-                            file_name=filename,
-                            mime="text/csv",
-                            key="download_lesson_attendance"
-                        )
+                    export_col1, export_col2 = st.columns(2)
+                    
+                    # Crea un nome file significativo in base ai filtri applicati
+                    filename_parts = ["Frequenza_Lezioni"]
+                    if date_param:
+                        date_str = str(date_param).replace("-", "")
+                        filename_parts.append(f"Data_{date_str}")
+                    if activity_param:
+                        # Normalizza il nome dell'attività per il filename
+                        activity_str = activity_param.replace(" ", "_").replace("/", "-")[:30]
+                        filename_parts.append(f"Attivita_{activity_str}")
+                    
+                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                    
+                    with export_col1:
+                        if st.button("Esporta in CSV", key="export_lesson_attendance_csv"):
+                            csv = attendance_display.to_csv(index=False).encode('utf-8')
+                            filename_csv = f"{'_'.join(filename_parts)}_{ts}.csv"
+                            
+                            st.download_button(
+                                label="📥 Scarica CSV",
+                                data=csv,
+                                file_name=filename_csv,
+                                mime="text/csv",
+                                key="download_lesson_attendance_csv"
+                            )
+                    
+                    with export_col2:
+                        if st.button("Esporta in Excel", key="export_lesson_attendance_excel"):
+                            output = BytesIO()
+                            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                attendance_display.to_excel(writer, sheet_name="Frequenza Lezioni", index=False)
+                            
+                            output.seek(0)
+                            filename_excel = f"{'_'.join(filename_parts)}_{ts}.xlsx"
+                            
+                            st.download_button(
+                                label="📥 Scarica Excel",
+                                data=output,
+                                file_name=filename_excel,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="download_lesson_attendance_excel"
+                            )
                 else:
                     st.info("Nessun dato disponibile per i filtri selezionati.")
         else:
@@ -919,11 +1319,15 @@ else:
     3.  **Analisi Dati (Tab 1):** Controlla statistiche e dati elaborati.
     4.  **Gestione Duplicati (Tab 2):** Identifica e rimuovi timbrature ravvicinate.
     5.  **Calcolo Presenze ed Esportazione (Tab 3):**
-        *   Filtra per **Percorso (Senza Art.13)** e opzionalmente per **Studente** per vedere i dettagli record per record.
+        *   **Seleziona il tipo di visualizzazione**:
+            - **Presenze per Studente e Percorso**: Vista tradizionale con filtri per percorso e studente
+            - **Riassunto per Percorso Originale**: Visualizza i totali parziali per ogni tipo di percorso originale
+            - **Riassunto per Percorso Elaborato**: Visualizza i totali parziali per ogni tipo di percorso elaborato
+            - **Lista Completa Studenti**: Elenco di tutti gli studenti con possibilità di ricerca e filtro
         *   **Esporta in Excel:** 
-            - Seleziona e ordina le colonne desiderate
+            - Seleziona e ordina le colonne desiderate (inclusa l'email)
             - Scegli un periodo di date per l'esportazione (opzionale)
-            - Genera file **dettagliato**, un foglio per codice percorso **estratto e mostrato all'inizio [Codice]** 
+            - Genera file **dettagliato**, un foglio per codice percorso **estratto e mostrato all'inizio [Codice]**
             - I percorsi mostrano ora il codice all'inizio nel formato [A-30] Nome Percorso
     6.  **Frequenza Lezioni (Tab 4):**
         *   Visualizza il numero di partecipanti unici per ogni combinazione di **Data** e **Attività**.
@@ -933,9 +1337,9 @@ else:
 
     ### Formato File Suggerito
     *   `CodiceFiscale`, `DataPresenza`, `OraPresenza`, `DenominazionePercorso` (o `percoro`) - Obbligatori
-    *   `Nome`, `Cognome`, `DenominazioneAttività`, `CodicePercorso` - Opzionali
+    *   `Nome`, `Cognome`, `recapito_ateneo` (per l'email), `DenominazioneAttività`, `CodicePercorso` - Opzionali
     """)
 
 # Footer
 st.markdown("---")
-st.markdown("### Gestione Presenze - Versione beta 1.3") # Aggiorna versione - aggiunto tab Frequenza Lezioni
+st.markdown("### Gestione Presenze - Versione beta 1.4") # Aggiorna versione - aggiunto supporto email e visualizzazione parziali per percorso
