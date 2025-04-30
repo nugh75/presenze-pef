@@ -13,7 +13,7 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
         percorso_chiave_col: Nome della colonna per il percorso chiave (senza Art.13)
         percorso_elab_col: Nome della colonna per il percorso elaborato
         original_col: Nome della colonna per il percorso originale
-        group_by: Criterio di raggruppamento ("studente", "percorso_originale", "percorso_elaborato", "lista_studenti")
+        group_by: Criterio di raggruppamento ("studente", "percorso_originale", "percorso_elaborato", "percorso_iscritti", "lista_studenti")
     
     Returns:
         DataFrame con i dati aggregati in base al criterio specificato
@@ -27,6 +27,10 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
         
     optional_cols = [percorso_elab_col, original_col] if group_by != "percorso_elaborato" else [original_col]
     name_cols = [col for col in ['Nome', 'Cognome', 'Email'] if col in df.columns]
+    
+    # Aggiungi le colonne degli iscritti alle colonne da considerare
+    enrolled_cols = [col for col in ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                                     'Dipartimento', 'LogonName', 'Matricola'] if col in df.columns]
     
     if not all(col in df.columns for col in required_cols):
         missing = [col for col in required_cols if col not in df.columns]
@@ -49,6 +53,12 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
         if percorso_elab_col not in df.columns:
             st.error(f"Impossibile procedere: colonna {percorso_elab_col} mancante")
             return pd.DataFrame()
+    elif group_by == "percorso_iscritti":
+        # Raggruppa per percorso degli iscritti
+        group_cols = [percorso_chiave_col]  # percorso_chiave_col qui sarà 'Percorso' dal CSV degli iscritti
+        if percorso_chiave_col not in df.columns:
+            st.error(f"Impossibile procedere: colonna {percorso_chiave_col} mancante")
+            return pd.DataFrame()
     elif group_by == "lista_studenti":
         # Lista degli studenti senza raggruppare per percorso
         group_cols = [cf_column]
@@ -62,10 +72,10 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
     
     # Ottieni le altre colonne che saranno aggregate con first()
     if group_by == "studente" or group_by == "lista_studenti":
-        # Per raggruppamento per studente, includi nome e cognome
-        first_cols = name_cols + [col for col in optional_cols if col in df.columns and col not in group_cols]
+        # Per raggruppamento per studente, includi nome, cognome, email e dati iscritti
+        first_cols = name_cols + enrolled_cols + [col for col in optional_cols if col in df.columns and col not in group_cols]
     else:
-        # Per raggruppamenti per percorso, non includere nome e cognome
+        # Per raggruppamenti per percorso, non includere dati personali
         first_cols = [col for col in optional_cols if col in df.columns and col not in group_cols]
     
     # Calcola il conteggio delle presenze
@@ -110,18 +120,25 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
         rename_map = {
             percorso_elab_col: 'Percorso Elaborato'
         }
+    elif group_by == "percorso_iscritti":
+        # Se stiamo raggruppando per la colonna Percorso degli iscritti
+        rename_map = {
+            percorso_chiave_col: 'Tipo Percorso Iscritti'
+        }
     
     attendance = attendance.rename(columns={k: v for k, v in rename_map.items() if k in attendance.columns})
     
     # Ordina le colonne in base al raggruppamento
     if group_by == "studente":
-        cols_order_final = [cf_column] + name_cols + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if col in attendance.columns]
+        cols_order_final = [cf_column] + name_cols + enrolled_cols + [rename_map.get(percorso_chiave_col, percorso_chiave_col)] + [rename_map.get(col, col) for col in [percorso_elab_col, original_col] if col in attendance.columns]
     elif group_by == "lista_studenti":
-        cols_order_final = [cf_column] + name_cols
+        cols_order_final = [cf_column] + name_cols + enrolled_cols
     elif group_by == "percorso_originale":
         cols_order_final = [rename_map.get(percorso_chiave_col, percorso_chiave_col)]
     elif group_by == "percorso_elaborato":
         cols_order_final = [rename_map.get(percorso_elab_col, percorso_elab_col)]
+    elif group_by == "percorso_iscritti":
+        cols_order_final = [rename_map.get(percorso_chiave_col, percorso_chiave_col)]
     
     # Aggiungi CFU Totali prima di Presenze nella visualizzazione
     if 'CFU Totali' in attendance.columns:
@@ -133,10 +150,16 @@ def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='Per
     final_cols = [c for c in cols_order_final if c in attendance.columns]
     attendance = attendance[final_cols]
     
-    # Riempie i valori nulli in nome e cognome
+    # Riempie i valori nulli in nome, cognome, email e nei campi degli iscritti
     if 'Nome' in attendance.columns: attendance['Nome'] = attendance['Nome'].fillna('')
     if 'Cognome' in attendance.columns: attendance['Cognome'] = attendance['Cognome'].fillna('')
     if 'Email' in attendance.columns: attendance['Email'] = attendance['Email'].fillna('')
+    
+    # Riempie i valori nulli nelle colonne degli iscritti
+    for col in ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                'Dipartimento', 'LogonName', 'Matricola']:
+        if col in attendance.columns: 
+            attendance[col] = attendance[col].fillna('')
     
     return attendance
 

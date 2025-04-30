@@ -178,6 +178,11 @@ def render_tab3(df_main):
                                 st.info(f"Nessun dato aggregato trovato per il percorso '{perc_sel}'.")
                                 df_to_display_agg = pd.DataFrame()
                                 df_to_display_detail = pd.DataFrame()
+
+                        # Se il filtro percorso è "Tutti"
+                        else:
+                            df_to_display_agg = attendance_df.copy()
+                            df_to_display_detail = current_df_for_tab3.copy()
                         
                         # --- Applicazione Filtri in Sequenza ---
                         st.divider()

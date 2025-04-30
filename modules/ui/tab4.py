@@ -121,8 +121,11 @@ def render_tab4(df_main):
                         participants_df = participants_df.sort_values(by=['Cognome', 'Nome', 'CodiceFiscale'])
                         participants_df = participants_df.drop_duplicates(subset=['CodiceFiscale'])
                         
-                        # Seleziona solo le colonne necessarie, inclusi i percorsi
-                        display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email', 'PercorsoInternal', 'PercorsoOriginaleSenzaArt13Internal']
+                        # Seleziona solo le colonne necessarie, inclusi i dati degli iscritti e i percorsi
+                        display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email', 
+                                          'Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                                          'Dipartimento', 'LogonName', 'Matricola',
+                                          'PercorsoInternal', 'PercorsoOriginaleSenzaArt13Internal']
                         columns_to_show = [col for col in display_columns if col in participants_df.columns]
                         
                         # Rinomina le colonne dei percorsi per una migliore visualizzazione

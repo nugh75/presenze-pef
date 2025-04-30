@@ -31,7 +31,9 @@ def render_tab1(df_main):
     st.subheader("Dati Attuali Utilizzati per l'Analisi")
     cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 'DataPresenza', 'OraPresenza', 
                           'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 
-                          'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal', 
+                          'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal',
+                          'Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione',
+                          'Dipartimento', 'LogonName', 'Matricola',
                           'CodicePercorso', 'CFU', 'TimestampPresenza']
                           
     cols_show_exist = [col for col in cols_show_preferred if col in df_main.columns]
@@ -39,4 +41,5 @@ def render_tab1(df_main):
     
     st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 con codice " +
                "riposizionato all'inizio [Codice] (usato per fogli export e filtro Tab3). " +
-               "PercorsoInternal: Elaborato/Trasformato. CFU: Crediti Formativi Universitari associati all'attività.")
+               "PercorsoInternal: Elaborato/Trasformato. CFU: Crediti Formativi Universitari associati all'attività. " +
+               "Percorso, Codice_Classe_di_concorso, ecc.: Dati integrati dal file degli studenti iscritti.")

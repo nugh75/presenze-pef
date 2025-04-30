@@ -4,8 +4,7 @@ import streamlit as st
 from datetime import datetime, timedelta, date, time
 import difflib
 import re
-# Import diretto delle funzioni necessarie senza usare l'importazione relativa
-# per evitare problemi di risoluzione dei moduli
+import os  # Aggiunto per verificare l'esistenza dei file
 
 def normalize_generic(name):
     """Rimuove 'art.13' e spazi dalle stringhe"""
@@ -92,6 +91,11 @@ def load_data(uploaded_file):
         cfu_data = load_cfu_data()
         if cfu_data.empty:
             st.warning("Non è stato possibile caricare i dati dei CFU. I CFU non saranno disponibili.")
+            
+        # Carica i dati degli iscritti
+        enrolled_students = load_enrolled_students_data()
+        if enrolled_students.empty:
+            st.warning("Non è stato possibile caricare i dati degli iscritti. Le informazioni aggiuntive degli studenti non saranno disponibili.")
         
         df = pd.read_excel(uploaded_file)
         original_columns = df.columns.tolist()
@@ -206,6 +210,39 @@ def load_data(uploaded_file):
         if 'CodicePercorso' in original_columns and 'CodicePercorso' in df.columns: final_cols.append('CodicePercorso')
         if 'CFU' in df.columns: final_cols.append('CFU')  # Aggiungi la colonna CFU all'elenco delle colonne da mantenere
         
+        # Integra i dati degli iscritti se disponibili
+        if 'enrolled_students' in locals():
+            if enrolled_students.empty:
+                st.error("DataFrame degli iscritti vuoto, impossibile integrare i dati.")
+            else:
+                with st.spinner("Integrazione dati degli iscritti in corso..."):
+                    st.warning(f"Tentativo di integrazione di {enrolled_students.shape[0]} record di iscritti nei dati presenze...")
+                    
+                    # Stampa alcune righe di esempio degli iscritti per debug
+                    st.warning("Esempio dati iscritti (prime 3 righe):")
+                    if len(enrolled_students) > 0:
+                        st.write(enrolled_students.head(3))
+                    
+                    # Eseguo l'integrazione
+                    df = match_students_data(df, enrolled_students)
+                    
+                    # Verifica se l'integrazione è avvenuta correttamente
+                    enrolled_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Dipartimento']
+                    integrated_cols = [col for col in enrolled_cols if col in df.columns]
+                    if integrated_cols:
+                        for col in integrated_cols:
+                            non_null_count = df[col].notna().sum()
+                            st.warning(f"Integrazione colonna '{col}': {non_null_count} record non vuoti su {len(df)}")
+                    else:
+                        st.error("ATTENZIONE: Nessuna colonna degli iscritti è stata integrata nei dati!")
+                
+        # Aggiungo le nuove colonne degli iscritti alla lista di colonne da mantenere
+        new_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                    'Dipartimento', 'LogonName', 'Matricola']
+        for col in new_cols:
+            if col in df.columns:
+                final_cols.append(col)
+                
         cols_to_keep = [col for col in final_cols if col in df.columns]
         df_final = df[cols_to_keep].copy()
         return df_final
@@ -214,3 +251,181 @@ def load_data(uploaded_file):
         st.error(f"Errore critico caricamento/elaborazione file: {e}")
         st.exception(e)
         return None
+
+@st.cache_data(ttl=1) # Disabilitiamo quasi completamente la cache per il debug
+def load_enrolled_students_data():
+    """Carica i dati degli studenti iscritti dal file CSV."""
+    try:
+        # Usiamo il path assoluto per essere sicuri
+        file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'modules', 'dati', 'iscritti_29_aprile.csv')
+        if not os.path.exists(file_path):
+            st.error(f"File degli iscritti non trovato: {file_path}")
+            # Prova con un path relativo come fallback
+            file_path = 'modules/dati/iscritti_29_aprile.csv'
+            if not os.path.exists(file_path):
+                st.error(f"File degli iscritti non trovato nemmeno al path relativo: {file_path}")
+                return pd.DataFrame()
+            
+        # Stampiamo informazioni di debug
+        st.warning(f"Caricamento dati iscritti da: {os.path.abspath(file_path)}")
+        
+        # Carica il CSV con delimitatore punto e virgola e vari encoding come fallback
+        try:
+            enrolled_df = pd.read_csv(file_path, delimiter=';', encoding='utf-8-sig')
+        except UnicodeDecodeError:
+            try:
+                enrolled_df = pd.read_csv(file_path, delimiter=';', encoding='utf-8')
+            except UnicodeDecodeError:
+                enrolled_df = pd.read_csv(file_path, delimiter=';', encoding='latin-1')
+        
+        # Stampa informazioni sul dataframe caricato
+        st.warning(f"File iscritti caricato: {enrolled_df.shape[0]} righe, {enrolled_df.shape[1]} colonne")
+        st.warning(f"Colonne disponibili: {', '.join(enrolled_df.columns.tolist())}")
+        
+        # Verifico che ci siano le colonne necessarie
+        required_cols = ['Cognome', 'Nome', 'CodiceFiscale']
+        if not all(col in enrolled_df.columns for col in required_cols):
+            missing_cols = [col for col in required_cols if col not in enrolled_df.columns]
+            st.error(f"File degli iscritti: colonne richieste mancanti ({', '.join(missing_cols)})")
+            return pd.DataFrame()
+        
+        # Pulisco i dati
+        if 'CodiceFiscale' in enrolled_df.columns:
+            enrolled_df['CodiceFiscale'] = enrolled_df['CodiceFiscale'].astype(str).str.strip()
+        
+        # Creo una colonna di identificazione per facilitare il matching
+        enrolled_df['NomeCognome'] = enrolled_df['Nome'].str.lower() + ' ' + enrolled_df['Cognome'].str.lower()
+        
+        return enrolled_df
+    except Exception as e:
+        st.error(f"Errore durante il caricamento del file degli iscritti: {e}")
+        return pd.DataFrame()
+
+def match_students_data(df_presences, df_enrolled):
+    """
+    Integra i dati degli studenti iscritti nel dataframe delle presenze.
+    
+    Args:
+        df_presences: DataFrame con i dati delle presenze
+        df_enrolled: DataFrame con i dati degli studenti iscritti
+    
+    Returns:
+        DataFrame con i dati integrati
+    """
+    try:
+        if df_presences.empty:
+            st.warning("DataFrame presenze vuoto, impossibile eseguire il match.")
+            return df_presences
+            
+        if df_enrolled.empty:
+            st.warning("DataFrame iscritti vuoto, impossibile eseguire il match.")
+            return df_presences
+        
+        # Verifico che le colonne necessarie esistano
+        required_presence_cols = ['Cognome', 'Nome']
+        if not all(col in df_presences.columns for col in required_presence_cols):
+            st.warning(f"I dati di presenza non contengono tutte le colonne necessarie per il matching: {required_presence_cols}")
+            return df_presences
+            
+        # Verifico che le colonne degli iscritti esistano
+        required_enrolled_cols = ['Cognome', 'Nome', 'CodiceFiscale', 'Percorso']
+        if not all(col in df_enrolled.columns for col in required_enrolled_cols):
+            missing = [col for col in required_enrolled_cols if col not in df_enrolled.columns]
+            st.warning(f"I dati degli iscritti non contengono tutte le colonne necessarie: mancano {missing}")
+            return df_presences
+        
+        # Creo una copia del dataframe per non modificare l'originale
+        result_df = df_presences.copy()
+    
+        # Preparo colonna per il matching
+        result_df['NomeCognome'] = result_df['Nome'].str.lower() + ' ' + result_df['Cognome'].str.lower()
+    
+        # Colonne da integrare dal file degli iscritti
+        cols_to_merge = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                     'Dipartimento', 'LogonName', 'Matricola']
+    
+        # Contatori per statistiche
+        matched_by_cf = 0
+        matched_by_name = 0
+    
+        # Cerca corrispondenze in base al Codice Fiscale (metodo principale e più affidabile)
+        if 'CodiceFiscale' in result_df.columns and 'CodiceFiscale' in df_enrolled.columns:
+            # Creo un DataFrame con solo le righe con CF compilato
+            cf_mask = result_df['CodiceFiscale'].notna() & (result_df['CodiceFiscale'] != '')
+            with_cf = result_df[cf_mask]
+            
+            # Effettuo il merge per Codice Fiscale (lascia i valori originali se non trova match)
+            if not with_cf.empty:
+                merged_cf = pd.merge(
+                    with_cf, 
+                    df_enrolled[cols_to_merge + ['CodiceFiscale']], 
+                    on='CodiceFiscale', 
+                    how='left',
+                    suffixes=('', '_iscritti')
+                )
+                
+                # Aggiorno il DataFrame risultante con le righe contenenti CF
+                matched_indices = []
+                for idx, row in merged_cf.iterrows():
+                    if idx in result_df.index:
+                        match_found = False
+                        for col in cols_to_merge:
+                            if col in merged_cf.columns and pd.notna(row[col]):
+                                result_df.loc[idx, col] = row[col]
+                                match_found = True
+                        if match_found:
+                            matched_indices.append(idx)
+                            matched_by_cf += 1
+    
+        # Per le righe senza corrispondenza per CF, provo con Nome e Cognome
+        no_match_mask = ~result_df.index.isin(matched_indices) if 'matched_indices' in locals() else pd.Series(True, index=result_df.index)
+        if no_match_mask.any():
+            no_match_df = result_df[no_match_mask].copy()
+            merged_name = pd.merge(
+                no_match_df,
+                df_enrolled[cols_to_merge + ['NomeCognome']],
+                on='NomeCognome',
+                how='left',
+                suffixes=('', '_iscritti')
+            )
+            
+            # Aggiorno il DataFrame risultante con le righe contenenti solo Nome/Cognome
+            for idx, row in merged_name.iterrows():
+                if idx in result_df.index:
+                    match_found = False
+                    for col in cols_to_merge:
+                        if col in merged_name.columns and pd.notna(row[col]):
+                            result_df.loc[idx, col] = row[col]
+                            match_found = True
+                    if match_found:
+                        matched_by_name += 1
+    
+        # Elimino la colonna temporanea
+        if 'NomeCognome' in result_df.columns:
+            result_df = result_df.drop(columns=['NomeCognome'])
+        
+        # Mostro statistiche sul matching
+        total_records = len(result_df)
+        total_matches = matched_by_cf + matched_by_name
+        
+        # Verifica e mostra statistiche di integrazione dettagliate
+        percorso_integrati = result_df['Percorso'].notna().sum() if 'Percorso' in result_df.columns else 0
+        classe_concorso_integrati = result_df['Codice_Classe_di_concorso'].notna().sum() if 'Codice_Classe_di_concorso' in result_df.columns else 0
+        
+        if percorso_integrati == 0 and 'Percorso' in result_df.columns:
+            st.error(f"ERRORE CRITICO: La colonna 'Percorso' esiste ma non contiene dati validi!")
+        
+        st.warning(f"Matching studenti: {total_matches}/{total_records} record abbinati "
+                f"({matched_by_cf} tramite CF, {matched_by_name} tramite Nome/Cognome)")
+        st.warning(f"Colonne integrate: Percorso={percorso_integrati}, Classe Concorso={classe_concorso_integrati}")
+        
+        # Verifica se ci sono record nel dataframe dei presenti che hanno corrispondenza negli iscritti
+        if 'CodiceFiscale' in result_df.columns and 'CodiceFiscale' in df_enrolled.columns:
+            cf_in_comune = set(result_df['CodiceFiscale'].dropna()) & set(df_enrolled['CodiceFiscale'].dropna())
+            st.warning(f"Codici fiscali in comune tra presenze e iscritti: {len(cf_in_comune)}")
+        
+        return result_df
+    except Exception as e:
+        st.error(f"Errore durante il matching dei dati degli iscritti: {e}")
+        st.exception(e)
+        return df_presences
