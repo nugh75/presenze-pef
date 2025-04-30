@@ -163,7 +163,7 @@ def render_tab2(df_main):
                         st.success(f"{num_valid_to_remove} record rimossi automaticamente!")
                         # Non serve rerun qui, il download button apparirà sotto e l'interfaccia si aggiornerà
                         # st.rerun() # Rerun potrebbe essere necessario se l'UI dipende da `duplicates_removed` per nascondere sezioni
-                        st.experimental_rerun() # Forza aggiornamento UI
+                        st.rerun() # Forza aggiornamento UI
                         
                     except Exception as e:
                         st.error(f"Errore durante l'eliminazione automatica: {e}")
@@ -238,7 +238,7 @@ def render_tab2(df_main):
                             # Messaggi di successo/info (livello 5)
                             st.success(f"{num_actually_removed} record rimossi manualmente!")
                             st.info("Dati aggiornati. Ricaricamento dell'interfaccia per riflettere le modifiche...")
-                            st.experimental_rerun() # Rerun per aggiornare l'UI e nascondere le sezioni dei duplicati
+                            st.rerun() # Rerun per aggiornare l'UI e nascondere le sezioni dei duplicati
                         else:
                             # Livello 5
                             st.warning("Nessuno degli indici selezionati è stato trovato nel DataFrame corrente. Potrebbero essere già stati rimossi.")
@@ -310,7 +310,7 @@ def render_tab2(df_main):
                  st.session_state.duplicate_detection_results = (pd.DataFrame(), [], [])
                  st.session_state.report_data_to_download = None # Pulisce anche il report scaricabile
                  st.session_state.report_filename_to_download = None
-                 st.experimental_rerun()
+                 st.rerun()
 
         else:
             # Nessun duplicato trovato inizialmente

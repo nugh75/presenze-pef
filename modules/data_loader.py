@@ -304,11 +304,15 @@ def load_data(uploaded_file):
         if 'Cognome' not in df.columns: df['Cognome'] = ''
         
         final_cols = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 'DataPresenza', 'OraPresenza', 'TimestampPresenza']
-                      
-        if 'DenominazioneAttività' in df.columns: final_cols.append('DenominazioneAttività')
-        if activity_col_norm_internal in df.columns: final_cols.append(activity_col_norm_internal)
-        if 'CodicePercorso' in original_columns and 'CodicePercorso' in df.columns: final_cols.append('CodicePercorso')
-        if 'CFU' in df.columns: final_cols.append('CFU')  # Aggiungi la colonna CFU all'elenco delle colonne da mantenere
+        # Aggiungi solo se non già presente
+        if 'DenominazioneAttività' in df.columns and 'DenominazioneAttività' not in final_cols:
+            final_cols.append('DenominazioneAttività')
+        if activity_col_norm_internal in df.columns and activity_col_norm_internal not in final_cols:
+            final_cols.append(activity_col_norm_internal)
+        if 'CodicePercorso' in original_columns and 'CodicePercorso' in df.columns and 'CodicePercorso' not in final_cols:
+            final_cols.append('CodicePercorso')
+        if 'CFU' in df.columns and 'CFU' not in final_cols:
+            final_cols.append('CFU')  # Aggiungi la colonna CFU all'elenco delle colonne da mantenere
         
         # Integra i dati degli iscritti se disponibili
         if not enrolled_students.empty:
@@ -375,11 +379,15 @@ def load_data(uploaded_file):
         new_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
                     'Dipartimento', 'LogonName', 'Matricola']
         for col in new_cols:
-            if col in df.columns:
+            if col in df.columns and col not in final_cols:
                 final_cols.append(col)
-                
+
+        # Rimuovi duplicati mantenendo l'ordine (ulteriore sicurezza)
+        final_cols = list(dict.fromkeys(final_cols))
         cols_to_keep = [col for col in final_cols if col in df.columns]
         df_final = df[cols_to_keep].copy()
+        # Rimuovi eventuali colonne duplicate dal DataFrame finale (può succedere dopo merge/concat)
+        df_final = df_final.loc[:, ~df_final.columns.duplicated()]
         return df_final
         
     except Exception as e: 

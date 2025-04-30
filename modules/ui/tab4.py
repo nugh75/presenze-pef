@@ -11,6 +11,13 @@ def render_tab4(df_main):
     st.write("Visualizza il numero di partecipanti unici per ogni combinazione di data e attività. Puoi filtrare i risultati per data e/o per attività.")
 
     current_df_for_tab4 = df_main
+    
+    # Rimuovi colonne duplicate se presenti
+    if current_df_for_tab4 is not None and isinstance(current_df_for_tab4, pd.DataFrame):
+        duplicate_cols = current_df_for_tab4.columns[current_df_for_tab4.columns.duplicated()]
+        if len(duplicate_cols) > 0:
+            st.warning(f"RILEVATE COLONNE DUPLICATE in Tab4: {list(duplicate_cols)}")
+            current_df_for_tab4 = current_df_for_tab4.loc[:, ~current_df_for_tab4.columns.duplicated()]
 
     if not current_df_for_tab4.empty:
         date_col = 'DataPresenza'
@@ -24,42 +31,42 @@ def render_tab4(df_main):
         else:
             st.subheader("Filtri")
             
-            # Creazione di due colonne per i filtri indipendenti
-            col1, col2 = st.columns(2)
-            
-            # Filtro per data
-            with col1:
-                # Ottieni tutte le date uniche e ordinate
-                unique_dates = sorted(current_df_for_tab4[date_col].unique())
-                date_filter = st.selectbox(
-                    "Filtra per data:",
-                    ["Tutte le date"] + [d for d in unique_dates if pd.notna(d)],
-                    key="date_filter_tab4"
-                )
-            
-            # Filtro per attività
-            with col2:
-                # Ottieni tutte le attività uniche e ordinate alfabeticamente
-                unique_activities = sorted([a for a in current_df_for_tab4[activity_col].unique() if isinstance(a, str) and a.strip()])
-                activity_filter = st.selectbox(
-                    "Filtra per attività:",
-                    ["Tutte le attività"] + unique_activities,
-                    key="activity_filter_tab4"
-                )
-            
+
+            # --- FILTRI GERARCHICI: prima attività, poi data ---
+            # Filtro per attività (sempre visibile)
+            unique_activities = sorted([a for a in current_df_for_tab4[activity_col].unique() if isinstance(a, str) and a.strip()])
+            activity_filter = st.selectbox(
+                "Filtra per attività:",
+                ["Tutte le attività"] + unique_activities,
+                key="activity_filter_tab4"
+            )
+
+            # Filtro per data: solo date relative all'attività selezionata
+            if activity_filter == "Tutte le attività":
+                filtered_df = current_df_for_tab4
+            else:
+                filtered_df = current_df_for_tab4[current_df_for_tab4[activity_col] == activity_filter]
+
+            unique_dates = sorted(filtered_df[date_col].unique())
+            date_filter = st.selectbox(
+                "Filtra per data:",
+                ["Tutte le date"] + [d for d in unique_dates if pd.notna(d)],
+                key="date_filter_tab4"
+            )
+
             # Calcola e visualizza i dati sulla frequenza delle lezioni
-            if date_filter == "Tutte le date" and activity_filter == "Tutte le attività":
+            if activity_filter == "Tutte le attività" and date_filter == "Tutte le date":
                 st.subheader("Frequenza per tutte le lezioni")
-            elif date_filter != "Tutte le date" and activity_filter == "Tutte le attività":
-                st.subheader(f"Frequenza per le lezioni del {date_filter}")
-            elif date_filter == "Tutte le date" and activity_filter != "Tutte le attività":
+            elif activity_filter != "Tutte le attività" and date_filter == "Tutte le date":
                 st.subheader(f"Frequenza per l'attività: {activity_filter}")
+            elif activity_filter == "Tutte le attività" and date_filter != "Tutte le date":
+                st.subheader(f"Frequenza per le lezioni del {date_filter}")
             else:
                 st.subheader(f"Frequenza per l'attività: {activity_filter} del {date_filter}")
-            
+
             # Gestisci i parametri dei filtri
-            date_param = date_filter if date_filter != "Tutte le date" else None
             activity_param = activity_filter if activity_filter != "Tutte le attività" else None
+            date_param = date_filter if date_filter != "Tutte le date" else None
             
             # Calcola i dati della frequenza
             attendance_data = calculate_lesson_attendance(
@@ -121,27 +128,33 @@ def render_tab4(df_main):
                         participants_df = participants_df.sort_values(by=['Cognome', 'Nome', 'CodiceFiscale'])
                         participants_df = participants_df.drop_duplicates(subset=['CodiceFiscale'])
                         
-                        # Seleziona solo le colonne necessarie, inclusi i dati degli iscritti e i percorsi
-                        display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email', 
-                                          'Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
-                                          'Dipartimento', 'LogonName', 'Matricola',
-                                          'Percorso']
+                        # Seleziona solo le colonne necessarie, inclusi i dati degli iscritti e i percorsi, senza duplicati
+                        display_columns = []
+                        for col in ['Cognome', 'Nome', 'CodiceFiscale', 'Email', 
+                                    'Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                                    'Dipartimento', 'LogonName', 'Matricola', 'Percorso']:
+                            if col not in display_columns:
+                                display_columns.append(col)
                         columns_to_show = [col for col in display_columns if col in participants_df.columns]
                         
                         # Rinomina le colonne dei percorsi per una migliore visualizzazione
                         rename_map = {}
                         if 'Percorso' in columns_to_show:
                             rename_map['Percorso'] = 'Percorso'
-                        
+
                         # Applica la rinomina se necessario
                         if rename_map:
                             participants_df = participants_df.rename(columns=rename_map)
-                            # Aggiorna i nomi delle colonne per visualizzazione
                             columns_to_show = [rename_map.get(col, col) for col in columns_to_show]
-                        
+
+                        # Rimuovi colonne duplicate dal DataFrame finale (ulteriore sicurezza)
+                        participants_df = participants_df.loc[:, ~participants_df.columns.duplicated()]
+
                         if columns_to_show:
+                            # Filtra solo le colonne da mostrare che sono effettivamente nel DataFrame (potrebbero essere state rimosse per duplicazione)
+                            valid_columns = [col for col in columns_to_show if col in participants_df.columns]
                             # Visualizza la tabella con i dati dei partecipanti
-                            st.dataframe(participants_df[columns_to_show], use_container_width=True)
+                            st.dataframe(participants_df[valid_columns], use_container_width=True)
                             st.info(f"Partecipanti totali: {len(participants_df)}")
                             
                             # Aggiungi opzione per esportare la lista dei partecipanti

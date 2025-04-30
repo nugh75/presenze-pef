@@ -136,6 +136,16 @@ elif 'processed_df' in st.session_state:
 
 df_main = st.session_state.get('processed_df', None)
 
+# CORREZIONE ANTI-DUPLICATI - Ispezione e pulizia
+if df_main is not None and isinstance(df_main, pd.DataFrame):
+    duplicate_cols = df_main.columns[df_main.columns.duplicated()]
+    if len(duplicate_cols) > 0:
+        st.sidebar.warning(f"RILEVATE COLONNE DUPLICATE nel DataFrame principale: {list(duplicate_cols)}")
+        # Rimuovi colonne duplicate
+        st.sidebar.warning("Rimozione automatica delle colonne duplicate in corso...")
+        df_main = df_main.loc[:, ~df_main.columns.duplicated()]
+        st.sidebar.success("Colonne duplicate rimosse con successo!")
+
 # --- Tabs ---
 if df_main is not None and isinstance(df_main, pd.DataFrame):
     tab1, tab2, tab3, tab4 = st.tabs(["Analisi Dati", "Gestione Duplicati", "Calcolo Presenze ed Esportazione", "Frequenza Lezioni"])
