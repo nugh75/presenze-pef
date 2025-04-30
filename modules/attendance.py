@@ -2,8 +2,8 @@
 import pandas as pd
 import streamlit as st
 
-def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='PercorsoOriginaleSenzaArt13Internal', 
-                         percorso_elab_col='PercorsoInternal', original_col='PercorsoOriginaleInternal', group_by="studente"):
+def calculate_attendance(df, cf_column='CodiceFiscale', percorso_chiave_col='DenominazioneAttività', 
+                         percorso_elab_col='Percorso', original_col='DenominazioneAttività', group_by="studente"):
     """
     Calcola le presenze aggregate in base al criterio specificato.
     

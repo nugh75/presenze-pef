@@ -1,54 +1,65 @@
-# Guida all'integrazione dei dati degli studenti iscritti
+# Guida all'Integrazione dei Dati
+
+Questa guida spiega il processo di integrazione dei dati esterni nel sistema di gestione delle presenze.
 
 ## Introduzione
 
-L'applicazione Gestione Presenze supporta ora l'integrazione dei dati degli studenti iscritti dal file CSV `modules/dati/iscritti_29_aprile.csv`. Questa funzionalità consente di arricchire le informazioni sugli studenti con dati aggiuntivi come la classe di concorso, il dipartimento e altri dettagli.
+Il sistema di gestione delle presenze può integrare due tipi di dati esterni:
 
-## Funzionalità principali
+1. **Dati degli Iscritti**: Informazioni sugli studenti iscritti, comprese classi di concorso, percorsi, e dati anagrafici
+2. **Dati dei CFU**: Informazioni sui crediti formativi associati a ciascuna attività didattica
 
-- **Caricamento dati iscritti**: L'app carica automaticamente il file CSV degli iscritti all'avvio
-- **Matching intelligente**: Gli studenti vengono riconosciuti tramite Codice Fiscale o, se non disponibile, tramite Nome e Cognome
-- **Visualizzazione integrata**: I dati aggiuntivi vengono mostrati in tutte le tabelle che contengono informazioni sugli studenti
-- **Esportazione completa**: Le esportazioni in CSV ed Excel includono tutte le informazioni aggiuntive
+## File dei Dati Esterni
 
-## Dati integrati
+### File degli Iscritti: `modules/dati/iscritti_29_aprile.csv`
 
-Il file `iscritti_29_aprile.csv` contiene le seguenti colonne che vengono integrate nei dati delle presenze:
+Questo file contiene informazioni sugli iscritti, in formato CSV con separatore ';', con le seguenti colonne principali:
+- `Cognome`, `Nome`: Dati anagrafici dello studente
+- `CodiceFiscale`: Identificativo univoco dello studente 
+- `Codice_Classe_di_concorso`: Codice della classe di concorso
+- `Percorso`: Informazione sul percorso formativo (es. PeF30, PeF60)
+- `Email`, `LogonName`, `Matricola`: Altre informazioni identificative
 
-1. `Percorso` - Percorso formativo dello studente
-2. `Codice_Classe_di_concorso` - Codice della classe di concorso
-3. `Codice_classe_di_concorso_e_denominazione` - Descrizione estesa della classe di concorso
-4. `Dipartimento` - Dipartimento di afferenza
-5. `LogonName` - Nome utente del sistema
-6. `Matricola` - Numero di matricola dello studente
+### File dei CFU: `crediti.csv`
 
-## Processo di matching
+Questo file contiene informazioni sui crediti formativi di ciascuna attività didattica, in formato CSV con separatore ',', con le seguenti colonne:
+- `DenominazioneAttività`: Nome dell'attività didattica
+- `CFU`: Numero di crediti formativi assegnati all'attività
 
-Il processo di abbinamento dei dati avviene in due passaggi:
+## Processo di Integrazione
 
-1. **Matching per Codice Fiscale**: Prima si tenta di abbinare gli studenti tramite il codice fiscale (metodo più affidabile)
-2. **Matching per Nome e Cognome**: Per gli studenti che non hanno trovato corrispondenza tramite CF, si prova con il nome e cognome
+Durante il caricamento dei dati delle presenze, il sistema tenta automaticamente di:
 
-Al termine del processo, l'applicazione mostrerà statistiche sul numero di record abbinati e il metodo utilizzato.
+1. **Integrare i dati degli iscritti**:
+   - L'abbinamento avviene principalmente tramite il codice fiscale (metodo più affidabile)
+   - In mancanza di corrispondenza per CF, tenta l'abbinamento con nome e cognome
+   - Le colonne integrate includono: Percorso, Codice_Classe_di_concorso, Dipartimento, Matricola
 
-## Utilizzo
+2. **Integrare i dati dei CFU**:
+   - L'abbinamento viene fatto tra la denominazione dell'attività nel file presenze e nel file CFU
+   - Il sistema accetta piccole differenze (case-insensitive e tolleranza di spazi)
+   - Viene usato un algoritmo di "fuzzy matching" con soglia di similarità al 90%
 
-Non è richiesta alcuna azione specifica per utilizzare questa funzionalità, poiché l'integrazione avviene automaticamente quando si carica un file delle presenze.
+## Risoluzione dei Problemi
 
-I dati integrati saranno visibili nelle seguenti schede dell'applicazione:
-- **Analisi Dati**: Nella tabella principale dei dati
-- **Calcolo Presenze ed Esportazione**: Nelle visualizzazioni per studente e nella lista completa degli studenti
-- **Frequenza Lezioni**: Nella lista dei partecipanti a una lezione specifica
+Se l'integrazione dei dati non funziona correttamente:
 
-## Requisiti
+1. **Verifica dei file**:
+   - Controlla che i file `iscritti_29_aprile.csv` e `crediti.csv` esistano nei percorsi corretti
+   - Verifica che i formati e i separatori dei file siano corretti
 
-Il file degli iscritti deve:
-- Essere posizionato in `modules/dati/iscritti_29_aprile.csv`
-- Usare il separatore punto e virgola (`;`)
-- Contenere almeno le colonne `Nome`, `Cognome` e `CodiceFiscale`
+2. **Problemi di matching**:
+   - Verifica che i codici fiscali siano coerenti tra i file
+   - Controlla la normalizzazione di nomi e cognomi (maiuscole/minuscole, spazi)
+   - Verifica che le denominazioni delle attività siano coerenti tra i file
 
-## Risoluzione problemi
+3. **Informazioni di Debug**:
+   - Il sistema fornisce messaggi informativi sul numero di record abbinati
+   - Viene mostrata la percentuale di abbinamento per ciascuna colonna integrata
+   - In caso di problemi gravi, viene mostrata un'analisi di alcune corrispondenze
 
-- Se il file degli iscritti non viene trovato, apparirà un messaggio di warning ma l'applicazione continuerà a funzionare senza l'integrazione dei dati
-- Se il file non contiene le colonne necessarie, verrà mostrato un errore specifico
-- Gli studenti per cui non è stato trovato un abbinamento manterranno solo i dati originali
+## Note Tecniche
+
+- Il sistema normalizza automaticamente nomi, cognomi e codici fiscali prima di tentare l'abbinamento
+- Per i CFU viene utilizzato un algoritmo di fuzzy matching per gestire piccole differenze nei nomi delle attività
+- L'integrazione avviene durante il caricamento dei dati e non richiede intervento manuale

@@ -125,15 +125,13 @@ def render_tab4(df_main):
                         display_columns = ['Cognome', 'Nome', 'CodiceFiscale', 'Email', 
                                           'Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
                                           'Dipartimento', 'LogonName', 'Matricola',
-                                          'PercorsoInternal', 'PercorsoOriginaleSenzaArt13Internal']
+                                          'Percorso']
                         columns_to_show = [col for col in display_columns if col in participants_df.columns]
                         
                         # Rinomina le colonne dei percorsi per una migliore visualizzazione
                         rename_map = {}
-                        if 'PercorsoInternal' in columns_to_show:
-                            rename_map['PercorsoInternal'] = 'Percorso Elaborato'
-                        if 'PercorsoOriginaleSenzaArt13Internal' in columns_to_show:
-                            rename_map['PercorsoOriginaleSenzaArt13Internal'] = 'Percorso Originale'
+                        if 'Percorso' in columns_to_show:
+                            rename_map['Percorso'] = 'Percorso'
                         
                         # Applica la rinomina se necessario
                         if rename_map:

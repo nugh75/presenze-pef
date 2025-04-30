@@ -45,7 +45,7 @@ def render_tab3(df_main):
     current_df_for_tab3 = df_main
 
     if not current_df_for_tab3.empty:
-        required_att_cols = ['CodiceFiscale', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 'PercorsoOriginaleInternal']
+        required_att_cols = ['CodiceFiscale', 'DataPresenza', 'OraPresenza', 'Nome', 'Cognome', 'DenominazioneAttività']
         if not all(col in current_df_for_tab3.columns for col in required_att_cols):
             missing_cols = [col for col in required_att_cols if col not in current_df_for_tab3.columns]
             st.error(f"Impossibile procedere: colonne mancanti ({', '.join(missing_cols)})")
@@ -62,71 +62,66 @@ def render_tab3(df_main):
                 with filter_container:
                     st.subheader("🔍 Filtri", divider="gray")
                     st.caption("I filtri consentono di ridurre i dati visualizzati nelle tabelle sottostanti")
-                    p_col_disp_key = "Percorso (Senza Art.13)"
-                    p_col_internal_key = 'PercorsoOriginaleSenzaArt13Internal'
+                    # Nota: La colonna 'DenominazioneAttività' viene rinominata in 'Percorso (Senza Art.13)' 
+                    # dalla funzione calculate_attendance quando group_by è "studente"
+                    
+                    p_col_internal_key = 'DenominazioneAttività'
             
-                # La logica per il filtraggio per studente e percorso
+                # La logica per il filtraggio 
                 if not attendance_df.empty:
-                    if p_col_disp_key not in attendance_df.columns:
-                        st.error(f"Colonna chiave '{p_col_disp_key}' non trovata nei dati aggregati.")
-                    elif p_col_internal_key not in current_df_for_tab3.columns:
+                    if p_col_internal_key not in current_df_for_tab3.columns:
                         st.error(f"Colonna chiave interna '{p_col_internal_key}' non trovata nei dati dettagliati.")
-                    # CORREZIONE: Questo else deve coprire tutto il blocco try/except successivo
                     else:
-                        try:
-                            # --- Filtro Percorso ---
-                            # Prepara la lista di percorsi per il selettore, garantendo che i codici siano visualizzati all'inizio
-                            perc_list = sorted([str(p) for p in attendance_df[p_col_disp_key].unique() if pd.notna(p)])
-                            # Ordina percorsi in base ai codici tra parentesi quadre se presenti
-                            perc_list = sorted(perc_list, key=extract_sort_key)
-                            
-                            # Statistica totale percorsi
-                            st.caption(f"📍 Trovati {len(perc_list)} percorsi distinti")
-                            
-                        except Exception as e:
-                            st.error(f"Errore nella preparazione dei filtri: {e}")
-                            perc_list = []
-                            
-                        # Migliora la visualizzazione del filtro per percorso
-                        filter_col1, filter_col2 = st.columns([3, 1])
-                        with filter_col1:
-                            perc_sel = st.selectbox(f"📚 Seleziona Percorso:", ["Tutti"] + perc_list, key="filt_perc_tab3_v7")
+                        # Inizializzazione dei dataframe filtrati
+                        df_filtrato_concorso_agg = attendance_df.copy()
+                        df_filtrato_concorso_detail = current_df_for_tab3.copy()
+                        # Nota: Il filtro per Codice Classe di concorso è stato rimosso
                         
-                        # --- Filtro per Codice Classe di concorso ---
+                        # --- Filtro per Denominazione Classe di concorso ---
                         st.divider()
-                        filter_concorso_col1, filter_concorso_col2 = st.columns([3, 1])
-                        codice_concorso_sel = "Tutti"
+                        filter_denom_concorso_col1, filter_denom_concorso_col2 = st.columns([3, 1])
+                        denom_concorso_sel = "Tutte"
                         
                         try:
-                            # Ottieni tutti i codici classe di concorso unici dal dataframe
-                            if 'Codice_Classe_di_concorso' in attendance_df.columns:
-                                codice_concorso_list = sorted([str(c) for c in attendance_df['Codice_Classe_di_concorso'].unique() if pd.notna(c)])
+                            # Ottieni tutte le denominazioni classi di concorso uniche dal dataframe
+                            if 'Codice_classe_di_concorso_e_denominazione' in df_filtrato_concorso_agg.columns:
+                                denom_concorso_list = sorted([str(d) for d in df_filtrato_concorso_agg['Codice_classe_di_concorso_e_denominazione'].unique() if pd.notna(d)])
                                 
-                                # Visualizza il filtro per codice classe di concorso
-                                with filter_concorso_col1:
-                                    codice_concorso_sel = st.selectbox(f"🏫 Seleziona Codice Classe di concorso:", 
-                                                                     ["Tutti"] + codice_concorso_list, 
-                                                                     key="filt_codice_concorso_tab3")
+                                # Visualizza il filtro per denominazione classe di concorso
+                                with filter_denom_concorso_col1:
+                                    denom_concorso_sel = st.selectbox(f"🏫 Seleziona Denominazione Classe di concorso:", 
+                                                                   ["Tutte"] + denom_concorso_list, 
+                                                                   key="filt_denom_concorso_tab3")
                                 
-                                # Mostra il numero di studenti per questo codice classe di concorso
-                                if codice_concorso_sel != "Tutti":
-                                    with filter_concorso_col2:
-                                        studenti_per_codice = len(attendance_df[attendance_df['Codice_Classe_di_concorso'] == codice_concorso_sel])
-                                        st.metric("Studenti nel codice", studenti_per_codice)
+                                # Mostra il numero di studenti per questa denominazione classe di concorso
+                                if denom_concorso_sel != "Tutte":
+                                    with filter_denom_concorso_col2:
+                                        studenti_per_denom = len(df_filtrato_concorso_agg[df_filtrato_concorso_agg['Codice_classe_di_concorso_e_denominazione'] == denom_concorso_sel])
+                                        st.metric("Studenti nella classe", studenti_per_denom)
                             else:
-                                with filter_concorso_col1:
-                                    st.warning("Colonna 'Codice_Classe_di_concorso' non presente nei dati")
+                                with filter_denom_concorso_col1:
+                                    st.warning("Colonna 'Codice_classe_di_concorso_e_denominazione' non presente nei dati")
                         except Exception as e:
-                            st.error(f"Errore nel filtro codice classe di concorso: {e}")
+                            st.error(f"Errore nel filtro denominazione classe di concorso: {e}")
                         
-                        # --- Filtro per Denominazione Attività ---
+                        # Filtraggio basato sulla denominazione classe di concorso
+                        df_filtrato_denom_concorso_agg = df_filtrato_concorso_agg.copy()
+                        df_filtrato_denom_concorso_detail = df_filtrato_concorso_detail.copy()
+                        
+                        if denom_concorso_sel != "Tutte" and 'Codice_classe_di_concorso_e_denominazione' in df_filtrato_denom_concorso_agg.columns:
+                            df_filtrato_denom_concorso_agg = df_filtrato_denom_concorso_agg[df_filtrato_denom_concorso_agg['Codice_classe_di_concorso_e_denominazione'] == denom_concorso_sel].copy()
+                            if 'Codice_classe_di_concorso_e_denominazione' in df_filtrato_denom_concorso_detail.columns:
+                                df_filtrato_denom_concorso_detail = df_filtrato_denom_concorso_detail[df_filtrato_denom_concorso_detail['Codice_classe_di_concorso_e_denominazione'] == denom_concorso_sel].copy()
+                        
+                        # --- Filtro per Denominazione Attività (ora gerarchico) ---
+                        st.divider()
                         filter_denominazione_col1, filter_denominazione_col2 = st.columns([3, 1])
                         denominazione_sel = "Tutte"
                         
                         try:
-                            # Ottieni tutte le denominazioni attività uniche dal dataframe dettagliato
-                            if 'DenominazioneAttività' in current_df_for_tab3.columns:
-                                denominazione_list = sorted([str(d) for d in current_df_for_tab3['DenominazioneAttività'].unique() if pd.notna(d)])
+                            # Ottieni le denominazioni attività filtrate dal dataframe dettagliato
+                            if 'DenominazioneAttività' in df_filtrato_denom_concorso_detail.columns:
+                                denominazione_list = sorted([str(d) for d in df_filtrato_denom_concorso_detail['DenominazioneAttività'].unique() if pd.notna(d)])
                                 
                                 # Visualizza il filtro per denominazione attività
                                 with filter_denominazione_col1:
@@ -137,31 +132,43 @@ def render_tab3(df_main):
                                 # Mostra il numero di record per questa denominazione
                                 if denominazione_sel != "Tutte":
                                     with filter_denominazione_col2:
-                                        record_per_denominazione = len(current_df_for_tab3[current_df_for_tab3['DenominazioneAttività'] == denominazione_sel])
+                                        record_per_denominazione = len(df_filtrato_denom_concorso_detail[df_filtrato_denom_concorso_detail['DenominazioneAttività'] == denominazione_sel])
                                         st.metric("Record trovati", record_per_denominazione)
                             else:
                                 with filter_denominazione_col1:
                                     st.warning("Colonna 'DenominazioneAttività' non presente nei dati")
                         except Exception as e:
                             st.error(f"Errore nel filtro denominazione attività: {e}")
-
-                        # --- Filtro Studente (solo se percorso specifico è selezionato) ---
-                        stud_sel = "Tutti gli Studenti" # Default
-                        if perc_sel != "Tutti":
-                            # Preparazione lista studenti per il filtro
-                            temp_df_for_student_list = attendance_df[attendance_df[p_col_disp_key] == perc_sel].copy()
                             
-                            if not temp_df_for_student_list.empty:
-                                temp_df_for_student_list['StudentIdentifier'] = temp_df_for_student_list.apply(
-                                    lambda row: f"{row.get('Cognome','')} {row.get('Nome','')} ({row.get('CodiceFiscale','N/A')})".strip(), axis=1
-                                )
-                                student_list = sorted(temp_df_for_student_list['StudentIdentifier'].unique())
-                                
-                                # Statistica totale studenti per questo percorso
-                                with filter_col2:
-                                    st.metric("Studenti nel percorso", len(student_list))
-                                
-                                # Filtro studenti con ricerca
+                        # Filtraggio basato sulla denominazione attività
+                        df_filtrato_denominazione_agg = df_filtrato_denom_concorso_agg.copy()
+                        df_filtrato_denominazione_detail = df_filtrato_denom_concorso_detail.copy()
+                        
+                        if denominazione_sel != "Tutte" and 'DenominazioneAttività' in df_filtrato_denominazione_detail.columns:
+                            df_filtrato_denominazione_detail = df_filtrato_denominazione_detail[df_filtrato_denominazione_detail['DenominazioneAttività'] == denominazione_sel].copy()
+                            # Per i dati aggregati, filtriamo in base ai codici fiscali che hanno quella denominazione
+                            if not df_filtrato_denominazione_detail.empty and 'CodiceFiscale' in df_filtrato_denominazione_detail.columns and 'CodiceFiscale' in df_filtrato_denominazione_agg.columns:
+                                codici_fiscali_filtrati = df_filtrato_denominazione_detail['CodiceFiscale'].unique()
+                                df_filtrato_denominazione_agg = df_filtrato_denominazione_agg[df_filtrato_denominazione_agg['CodiceFiscale'].isin(codici_fiscali_filtrati)].copy()
+
+                        # --- Filtro Studente (sempre disponibile) ---
+                        st.divider()
+                        filter_studente_col1, filter_studente_col2 = st.columns([3, 1])
+                        stud_sel = "Tutti gli Studenti" # Default
+                        
+                        # Preparazione lista studenti per il filtro
+                        if not df_filtrato_denominazione_agg.empty:
+                            df_filtrato_denominazione_agg['StudentIdentifier'] = df_filtrato_denominazione_agg.apply(
+                                lambda row: f"{row.get('Cognome','')} {row.get('Nome','')} ({row.get('CodiceFiscale','N/A')})".strip(), axis=1
+                            )
+                            student_list = sorted(df_filtrato_denominazione_agg['StudentIdentifier'].unique())
+                            
+                            # Statistica totale studenti
+                            with filter_studente_col2:
+                                st.metric("Studenti disponibili", len(student_list))
+                            
+                            # Filtro studenti con ricerca
+                            with filter_studente_col1:
                                 search_placeholder = "Cerca per nome o cognome..."
                                 search_term = st.text_input("🔎 Cerca studente:", placeholder=search_placeholder, key="search_student")
                                 
@@ -173,9 +180,10 @@ def render_tab3(df_main):
                                 else:
                                     student_options = ["Tutti gli Studenti"] + student_list
                                 
-                                stud_sel = st.selectbox("👤 Seleziona Studente:", student_options, key="filt_stud_tab3_v7")
-                            else:
-                                st.info(f"Nessun dato aggregato trovato per il percorso '{perc_sel}'.")
+                                stud_sel = st.selectbox("👤 Seleziona Studente:", student_options, key="filt_stud_tab3_v8")
+                        else:
+                            with filter_studente_col1:
+                                st.info(f"Nessun dato aggregato trovato con i filtri applicati.")
                                 df_to_display_agg = pd.DataFrame()
                                 df_to_display_detail = pd.DataFrame()
                         
@@ -183,39 +191,16 @@ def render_tab3(df_main):
                         st.divider()
                         st.subheader("🔍 Risultati Filtrati", divider="gray")
                         
-                        # Filtriamo per percorso se selezionato
-                        if perc_sel != "Tutti":
-                            df_to_display_agg = attendance_df[attendance_df[p_col_disp_key] == perc_sel].copy()
-                            df_to_display_detail = current_df_for_tab3[current_df_for_tab3[p_col_internal_key] == perc_sel].copy()
-                        else:
-                            df_to_display_agg = attendance_df.copy()
-                            df_to_display_detail = current_df_for_tab3.copy()
+                        # I dati già filtrati per codice classe e denominazione
+                        df_to_display_agg = df_filtrato_denominazione_agg.copy()
+                        df_to_display_detail = df_filtrato_denominazione_detail.copy()
                         
-                        # Contatore record dopo filtro percorso
-                        num_record_dopo_filtro_percorso = len(df_to_display_agg)
-                        
-                        # Applica filtro per Codice Classe di concorso se selezionato
-                        if codice_concorso_sel != "Tutti" and 'Codice_Classe_di_concorso' in df_to_display_agg.columns:
-                            df_to_display_agg = df_to_display_agg[df_to_display_agg['Codice_Classe_di_concorso'] == codice_concorso_sel].copy()
-                            if 'Codice_Classe_di_concorso' in df_to_display_detail.columns:
-                                df_to_display_detail = df_to_display_detail[df_to_display_detail['Codice_Classe_di_concorso'] == codice_concorso_sel].copy()
-                        
-                        # Contatore record dopo filtro codice concorso
+                        # Contatori per i filtri applicati
                         num_record_dopo_filtro_codice = len(df_to_display_agg)
-                        
-                        # Applica filtro per Denominazione Attività se selezionato
-                        if denominazione_sel != "Tutte" and 'DenominazioneAttività' in df_to_display_detail.columns:
-                            df_to_display_detail = df_to_display_detail[df_to_display_detail['DenominazioneAttività'] == denominazione_sel].copy()
-                            # Per i dati aggregati, filtriamo in base ai codici fiscali che hanno quella denominazione
-                            if not df_to_display_detail.empty and 'CodiceFiscale' in df_to_display_detail.columns and 'CodiceFiscale' in df_to_display_agg.columns:
-                                codici_fiscali_filtrati = df_to_display_detail['CodiceFiscale'].unique()
-                                df_to_display_agg = df_to_display_agg[df_to_display_agg['CodiceFiscale'].isin(codici_fiscali_filtrati)].copy()
-                        
-                        # Contatore record dopo filtro denominazione
                         num_record_dopo_filtro_denom = len(df_to_display_agg)
                         
                         # Applica filtro per studente se selezionato
-                        if stud_sel != "Tutti gli Studenti" and perc_sel != "Tutti":
+                        if stud_sel != "Tutti gli Studenti":
                             try:
                                 selected_cf = re.search(r'\((.*?)\)', stud_sel).group(1)
                                 df_to_display_agg = df_to_display_agg[df_to_display_agg['CodiceFiscale'] == selected_cf].copy()
@@ -228,14 +213,12 @@ def render_tab3(df_main):
                         
                         # Mostriamo statistiche sui filtri applicati
                         with st.expander("📊 Statistiche Filtri", expanded=False):
-                            stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+                            stats_col1, stats_col2, stats_col3 = st.columns(3)
                             with stats_col1:
-                                st.metric("Dopo filtro percorso", num_record_dopo_filtro_percorso)
-                            with stats_col2:
                                 st.metric("Dopo filtro codice", num_record_dopo_filtro_codice)
-                            with stats_col3:
+                            with stats_col2:
                                 st.metric("Dopo filtro denom.", num_record_dopo_filtro_denom)
-                            with stats_col4:
+                            with stats_col3:
                                 st.metric("Record finali", num_record_dopo_filtro_stud)
 
                         try:
@@ -246,8 +229,8 @@ def render_tab3(df_main):
                                 
                                 with tables_container:
                                     # Statistiche riassuntive
-                                    if perc_sel != "Tutti" and stud_sel == "Tutti gli Studenti":
-                                        st.markdown("### 📊 Statistiche del percorso")
+                                    if stud_sel == "Tutti gli Studenti":
+                                        st.markdown("### 📊 Statistiche")
                                         stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
                                         
                                         with stats_col1:
@@ -267,22 +250,31 @@ def render_tab3(df_main):
                                             st.metric("Totale Studenti", tot_studenti)
                                     
                                     # Titolo della tabella
-                                    if perc_sel == "Tutti":
-                                        st.subheader("📋 Riepilogo Aggregato - Tutti i Percorsi", divider="blue")
-                                    else: # Percorso selezionato, ma tutti gli studenti
-                                        st.subheader(f"📋 Riepilogo Aggregato - {perc_sel}", divider="blue")
+                                    filtri_applicati = []
+                                    if denom_concorso_sel != "Tutte":
+                                        filtri_applicati.append(f"Classe di concorso: {denom_concorso_sel}")
+                                    if denominazione_sel != "Tutte":
+                                        filtri_applicati.append(f"Attività: {denominazione_sel}")
+                                    if stud_sel != "Tutti gli Studenti":
+                                        filtri_applicati.append(f"Studente: {stud_sel}")
+                                    
+                                    if filtri_applicati:
+                                        filtri_text = " | ".join(filtri_applicati)
+                                        st.subheader(f"📋 Riepilogo Aggregato - {filtri_text}", divider="blue")
+                                    else:
+                                        st.subheader("📋 Riepilogo Aggregato - Tutti i dati", divider="blue")
 
                                     cols_disp_agg = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 
-                                                    'Percorso', 'Codice_Classe_di_concorso', 'Dipartimento', 'Matricola',
-                                                    p_col_disp_key, 'Percorso Elaborato (Info)', 'CFU Totali', 'Presenze']
+                                                    'Codice_classe_di_concorso_e_denominazione', 'Dipartimento', 'Matricola',
+                                                    'Percorso (Senza Art.13)', 'CFU Totali', 'Presenze']
                                     cols_disp_agg_exist = [c for c in cols_disp_agg if c in df_to_display_agg.columns]
-                                    sort_agg_by = [p_col_disp_key, 'Cognome', 'Nome'] if perc_sel == "Tutti" else ['Cognome', 'Nome']
+                                    sort_agg_by = ['Percorso (Senza Art.13)', 'Cognome', 'Nome']
                                     
                                     # Opzioni di visualizzazione e ordinamento
                                     visual_options_col1, visual_options_col2 = st.columns(2)
                                     
                                     with visual_options_col1:
-                                        sort_options = ["Presenze (decrescente)", "Cognome e Nome", "Percorso", "Codice Classe di concorso"]
+                                        sort_options = ["Presenze (decrescente)", "Cognome e Nome", "Denominazione Attività", "Denominazione Classe di concorso"]
                                         selected_sort = st.radio("Ordinamento tabella:", sort_options, horizontal=True)
                                     
                                     with visual_options_col2:
@@ -294,10 +286,10 @@ def render_tab3(df_main):
                                         df_to_show = df_to_display_agg[cols_disp_agg_exist].sort_values(by=['Presenze'], ascending=False)
                                     elif selected_sort == "Cognome e Nome" and 'Cognome' in df_to_display_agg.columns:
                                         df_to_show = df_to_display_agg[cols_disp_agg_exist].sort_values(by=['Cognome', 'Nome'])
-                                    elif selected_sort == "Percorso" and p_col_disp_key in df_to_display_agg.columns:
-                                        df_to_show = df_to_display_agg[cols_disp_agg_exist].sort_values(by=[p_col_disp_key, 'Cognome', 'Nome'])
-                                    elif selected_sort == "Codice Classe di concorso" and 'Codice_Classe_di_concorso' in df_to_display_agg.columns:
-                                        df_to_show = df_to_display_agg[cols_disp_agg_exist].sort_values(by=['Codice_Classe_di_concorso', 'Cognome', 'Nome'])
+                                    elif selected_sort == "Denominazione Attività" and 'Percorso (Senza Art.13)' in df_to_display_agg.columns:
+                                        df_to_show = df_to_display_agg[cols_disp_agg_exist].sort_values(by=['Percorso (Senza Art.13)', 'Cognome', 'Nome'])
+                                    elif selected_sort == "Denominazione Classe di concorso" and 'Codice_classe_di_concorso_e_denominazione' in df_to_display_agg.columns:
+                                        df_to_show = df_to_display_agg[cols_disp_agg_exist].sort_values(by=['Codice_classe_di_concorso_e_denominazione', 'Cognome', 'Nome'])
                                     elif sort_agg_by:
                                         valid_sort_agg_by = [c for c in sort_agg_by if c in df_to_display_agg.columns]
                                         if valid_sort_agg_by:
@@ -328,13 +320,20 @@ def render_tab3(df_main):
                                 # Sezione per il dettaglio delle presenze
                                 detail_container = st.container()
                                 with detail_container:
-                                    # Titolo della sezione dettaglio
-                                    if perc_sel == "Tutti":
-                                        st.subheader("📝 Dettaglio Record Presenze - Tutti i Percorsi", divider="blue")
+                                    # Titolo della sezione dettaglio con filtri applicati
+                                    filtri_applicati = []
+                                    if denom_concorso_sel != "Tutte":
+                                        filtri_applicati.append(f"Classe di concorso: {denom_concorso_sel}")
+                                    if denominazione_sel != "Tutte":
+                                        filtri_applicati.append(f"Attività: {denominazione_sel}")
+                                    if stud_sel != "Tutti gli Studenti":
+                                        filtri_applicati.append(f"Studente: {stud_sel}")
+                                    
+                                    if filtri_applicati:
+                                        filtri_text = " | ".join(filtri_applicati)
+                                        st.subheader(f"📝 Dettaglio Record Presenze - {filtri_text}", divider="blue")
                                     else:
-                                        st.subheader(f"📝 Dettaglio Record Presenze - {perc_sel}", divider="blue")
-                                        if stud_sel != "Tutti gli Studenti":
-                                            st.caption(f"Studente selezionato: {stud_sel}")
+                                        st.subheader("📝 Dettaglio Record Presenze - Tutti i dati", divider="blue")
                                     
                                     # Riepilogo record trovati e statistiche dettaglio
                                     record_count = len(df_to_display_detail)
@@ -356,14 +355,14 @@ def render_tab3(df_main):
     
                                     # Colonne da visualizzare
                                     cols_disp_detail = ['CodiceFiscale', 'Cognome', 'Nome', 'Email', 'DataPresenza', 'OraPresenza', 
-                                                       'Percorso', 'Codice_Classe_di_concorso', 'Dipartimento',
-                                                       'DenominazioneAttività', 'CFU', 'PercorsoInternal']
+                                                       'Codice_classe_di_concorso_e_denominazione', 'Dipartimento',
+                                                       'DenominazioneAttività', 'CFU']
                                     cols_disp_detail_exist = [c for c in cols_disp_detail if c in df_to_display_detail.columns]
                                     
                                     # Ordinamento
                                     detail_sort_options = st.radio(
                                         "Ordinamento dettagli:", 
-                                        ["Per Data (più recente prima)", "Per Cognome e Nome", "Per Attività", "Per Codice Classe di concorso"],
+                                        ["Per Data (più recente prima)", "Per Cognome e Nome", "Per Attività", "Per Denominazione Classe di concorso"],
                                         horizontal=True
                                     )
                                     
@@ -374,13 +373,13 @@ def render_tab3(df_main):
                                     elif detail_sort_options == "Per Attività" and 'DenominazioneAttività' in df_to_display_detail.columns:
                                         sort_by_columns = ['DenominazioneAttività', 'DataPresenza']
                                         ascending = [True, True]
-                                    elif detail_sort_options == "Per Codice Classe di concorso" and 'Codice_Classe_di_concorso' in df_to_display_detail.columns:
-                                        sort_by_columns = ['Codice_Classe_di_concorso', 'Cognome', 'Nome']
+                                    elif detail_sort_options == "Per Denominazione Classe di concorso" and 'Codice_classe_di_concorso_e_denominazione' in df_to_display_detail.columns:
+                                        sort_by_columns = ['Codice_classe_di_concorso_e_denominazione', 'Cognome', 'Nome']
                                         ascending = [True, True, True]
                                     else:  # Default: per cognome e nome
                                         sort_by_columns = ['Cognome', 'Nome']
-                                        if perc_sel == "Tutti": sort_by_columns.insert(0, p_col_internal_key)
-                                        if 'DataPresenza' in df_to_display_detail.columns: sort_by_columns.append('DataPresenza')
+                                        if 'DataPresenza' in df_to_display_detail.columns: 
+                                            sort_by_columns.append('DataPresenza')
                                         ascending = [True] * len(sort_by_columns)
                                     
                                     # Filtra colonne valide per ordinamento
@@ -397,7 +396,7 @@ def render_tab3(df_main):
                                     
                                     st.dataframe(df_to_show, use_container_width=True)
                             else:
-                                if perc_sel != "Tutti": st.info("Nessun record dettagliato da mostrare per la selezione corrente.")
+                                st.info("Nessun record dettagliato da mostrare per la selezione corrente.")
                         except Exception as e: 
                             st.error(f"Errore durante la visualizzazione: {e}")
 
@@ -408,7 +407,7 @@ def render_tab3(df_main):
             export_container = st.container()
             with export_container:
                 st.subheader("📤 Esportazione Dettaglio Presenze", divider="gray")
-                course_col_export = 'PercorsoOriginaleSenzaArt13Internal'
+                course_col_export = 'DenominazioneAttività'  # Questa colonna esiste nei dati dettagliati
                 if course_col_export not in current_df_for_tab3.columns:
                     st.error(f"Colonna chiave '{course_col_export}' non trovata.")
                 else:
@@ -418,7 +417,7 @@ def render_tab3(df_main):
                     
                     with export_info_col:
                         with st.expander("Informazioni Esportazione"):
-                            st.info("L'esportazione Excel crea un foglio separato per ogni percorso.\nIl nome del foglio viene estratto dal codice del percorso.")
+                            st.info("L'esportazione Excel crea un foglio separato per ogni denominazione attività.\nIl nome del foglio viene estratto dal codice dell'attività.")
                     
                     # Tab per i due tipi di export
                     export_tab1, export_tab2 = st.tabs(["🗂️ Export Multi-Foglio", "📊 Export CSV"])
@@ -430,7 +429,7 @@ def render_tab3(df_main):
                         all_possible_cols = current_df_for_tab3.columns.tolist()
                         internal_cols_to_exclude = ['TimestampPresenza']
                         all_exportable_cols = [col for col in all_possible_cols if col not in internal_cols_to_exclude]
-                        default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Email','PercorsoInternal','PercorsoOriginaleSenzaArt13Internal','CFU']
+                        default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Email','Percorso','CFU']
                         default_cols_final = [col for col in default_cols_export_ordered if col in all_exportable_cols]
 
                         # Miglioriamo la visualizzazione dei dati di esempio
@@ -568,9 +567,6 @@ def render_tab3(df_main):
                                                     
                                                 try:
                                                     rename_map_export = {
-                                                        'PercorsoInternal': 'Tipo Percorso', 
-                                                        'PercorsoOriginaleInternal': 'Percorso Originale Input', 
-                                                        'PercorsoOriginaleSenzaArt13Internal': 'Denominazione Percorso', 
                                                         'DenominazioneAttivitaNormalizzataInternal': 'Attività Elaborata'
                                                     }
                                                     cols_to_rename_final = {k: v for k, v in rename_map_export.items() if k in df_sheet_export.columns}
@@ -658,9 +654,6 @@ def render_tab3(df_main):
                                         # Prepara il CSV con le colonne selezionate e rinominate
                                         df_export = filtered_df[final_ordered_cols]
                                         rename_map = {
-                                            'PercorsoInternal': 'Tipo Percorso', 
-                                            'PercorsoOriginaleInternal': 'Percorso Originale Input', 
-                                            'PercorsoOriginaleSenzaArt13Internal': 'Denominazione Percorso', 
                                             'DenominazioneAttivitaNormalizzataInternal': 'Attività Elaborata'
                                         }
                                         cols_to_rename = {k: v for k, v in rename_map.items() if k in df_export.columns}
@@ -700,12 +693,10 @@ def render_tab3(df_main):
                         
                         # Messaggio informativo sulle colonne che saranno rimosse in futuro
                         with footer_col1:
-                            with st.expander("⚠️ Nota sui campi che saranno rimossi in futuro"):
+                            with st.expander("⚠️ Nota sui campi rimossi"):
                                 st.warning("""
-                                I seguenti campi saranno rimossi in future versioni:
-                                - PercorsoOriginaleInternal
-                                - PercorsoOriginaleSenzaArt13Internal
-                                - PercorsoInternal
+                                Le colonne relative al percorso Art.13 sono state rimosse.
+                                Il database ora utilizza come chiavi: Nome, Cognome, Codice_classe_di_concorso_e_denominazione
                                 """)
                                 
                         # Aiuto sulla funzionalità

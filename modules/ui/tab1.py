@@ -14,8 +14,7 @@ def render_tab1(df_main):
     if 'CodiceFiscale' in df_main.columns: 
         metrics_data["Persone Uniche (CF)"] = df_main['CodiceFiscale'].nunique()
         
-    if 'PercorsoInternal' in df_main.columns: 
-        metrics_data["Percorsi Unici (Elab.)"] = df_main['PercorsoInternal'].nunique()
+    # Le metriche relative a PercorsoInternal sono state rimosse
         
     activity_col_norm_internal = 'DenominazioneAttivitaNormalizzataInternal'
     if activity_col_norm_internal in df_main.columns: 
@@ -29,8 +28,7 @@ def render_tab1(df_main):
             st.metric(label, value)
     
     st.subheader("Dati Attuali Utilizzati per l'Analisi")
-    cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 'DataPresenza', 'OraPresenza', 
-                          'PercorsoOriginaleInternal', 'PercorsoOriginaleSenzaArt13Internal', 'PercorsoInternal', 
+    cols_show_preferred = ['CodiceFiscale', 'Nome', 'Cognome', 'Email', 'DataPresenza', 'OraPresenza',
                           'DenominazioneAttività', 'DenominazioneAttivitaNormalizzataInternal',
                           'Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione',
                           'Dipartimento', 'LogonName', 'Matricola',
@@ -39,7 +37,5 @@ def render_tab1(df_main):
     cols_show_exist = [col for col in cols_show_preferred if col in df_main.columns]
     st.dataframe(df_main[cols_show_exist], use_container_width=True)
     
-    st.caption("PercorsoOriginaleInternal: Input. PercorsoOriginaleSenzaArt13Internal: Input senza Art.13 con codice " +
-               "riposizionato all'inizio [Codice] (usato per fogli export e filtro Tab3). " +
-               "PercorsoInternal: Elaborato/Trasformato. CFU: Crediti Formativi Universitari associati all'attività. " +
+    st.caption("CFU: Crediti Formativi Universitari associati all'attività. " +
                "Percorso, Codice_Classe_di_concorso, ecc.: Dati integrati dal file degli studenti iscritti.")
