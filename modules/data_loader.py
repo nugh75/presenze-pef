@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta, date, time
+import unicodedata  # Per la normalizzazione dei caratteri Unicode
 import difflib
 import re
 import os  # Aggiunto per verificare l'esistenza dei file
@@ -135,18 +136,51 @@ def load_data(uploaded_file):
         st.info("Caricamento file Excel...")
         df = pd.read_excel(uploaded_file)
         st.success(f"File Excel caricato con successo: {len(df)} record trovati.")
-        
+
         original_columns = df.columns.tolist()
-        required_cols = ['CodiceFiscale', 'DataPresenza', 'OraPresenza']
+
+        # --- AGGIUNTA: split automatico se serve ---
+        if (('DataPresenza' not in df.columns or 'OraPresenza' not in df.columns) and 'Ora di inizio' in df.columns):
+            st.info("Colonne DataPresenza/OraPresenza mancanti ma trovata 'Ora di inizio': eseguo split automatico.")
+            df = process_datetime_field(df, 'Ora di inizio')
+
+        # Prima integro i dati degli iscritti, che potrebbero fornire campi obbligatori mancanti
+        # Preparo le colonne necessarie per l'integrazione (Nome e Cognome)
+        if 'Nome' not in df.columns: df['Nome'] = ''
+        if 'Cognome' not in df.columns: df['Cognome'] = ''
         
+        # Rendere opzionale la colonna percorso dato che ora l'informazione proviene dal file iscritti
         if not ('percoro' in df.columns or 'DenominazionePercorso' in df.columns): 
-            st.error("Colonna Percorso ('percoro' o 'DenominazionePercorso') non trovata.")
-            return None
+            st.warning("Colonna Percorso ('percoro' o 'DenominazionePercorso') non trovata nel file. Verrà aggiunta dai dati degli iscritti.")
+            # Aggiungo una colonna vuota che verrà popolata durante l'integrazione con i dati iscritti
+            df['Percorso'] = None
             
+        # Integra subito i dati degli iscritti se disponibili
+        if not enrolled_students.empty:
+            with st.spinner("Integrazione anticipata dei dati degli iscritti in corso..."):
+                st.info("Integrando i dati degli iscritti per ottenere campi obbligatori mancanti...")
+                
+                # Converto i campi in string per evitare problemi
+                df['Nome'] = df['Nome'].astype(str)
+                df['Cognome'] = df['Cognome'].astype(str)
+                
+                # Eseguo l'integrazione
+                df = match_students_data(df, enrolled_students)
+        
+        # Verifico la presenza delle colonne obbligatorie DOPO l'integrazione
+        required_cols = ['DataPresenza', 'OraPresenza']  # CodiceFiscale non è più obbligatorio inizialmente
         for col in required_cols:
             if col not in df.columns: 
                 st.error(f"Colonna obbligatoria '{col}' non trovata.")
                 return None
+                
+        # Verifico se CodiceFiscale è stato aggiunto dai dati degli iscritti
+        if 'CodiceFiscale' not in df.columns:
+            st.warning("La colonna CodiceFiscale non è presente nei dati originali e non è stata aggiunta dai dati iscritti.")
+            # Creo una colonna vuota - i record senza CF saranno rimossi più tardi
+            df['CodiceFiscale'] = None
+        else:
+            df['CodiceFiscale'] = df['CodiceFiscale'].astype(str).str.strip()
                 
         df['CodiceFiscale'] = df['CodiceFiscale'].astype(str).str.strip()
         
@@ -281,17 +315,29 @@ def load_data(uploaded_file):
             with st.spinner("Integrazione dati degli iscritti in corso..."):
                 st.info(f"Integrazione di {enrolled_students.shape[0]} record di iscritti nei dati presenze...")
                 
-                # Preparo i dati per il matching
-                # Normalizzazione di Nome e Cognome per migliorare il matching
-                if 'Nome' in df.columns:
-                    df['Nome'] = df['Nome'].astype(str).str.strip().str.lower().str.title()
-                if 'Cognome' in df.columns:
-                    df['Cognome'] = df['Cognome'].astype(str).str.strip().str.lower().str.title()
+                # Assicuro che i campi Nome e Cognome esistano e siano stringhe
+                # Non facciamo più qui la normalizzazione perché viene gestita nella funzione match_students_data
+                if 'Nome' not in df.columns:
+                    df['Nome'] = ''
+                if 'Cognome' not in df.columns:
+                    df['Cognome'] = ''
+                    
+                # Gestione speciale per il campo Email/Posta elettronica
+                email_column = None
+                for col in df.columns:
+                    if col.lower() in ['email', 'posta elettronica', 'e-mail', 'mail']:
+                        email_column = col
+                        break
                 
-                if 'Nome' in enrolled_students.columns:
-                    enrolled_students['Nome'] = enrolled_students['Nome'].astype(str).str.strip().str.lower().str.title()
-                if 'Cognome' in enrolled_students.columns:
-                    enrolled_students['Cognome'] = enrolled_students['Cognome'].astype(str).str.strip().str.lower().str.title()
+                if email_column and email_column != 'Email':
+                    df['Email'] = df[email_column]
+                    st.info(f"Copiato il contenuto della colonna '{email_column}' nella colonna 'Email'")
+                
+                # Converto i campi in string per evitare problemi
+                df['Nome'] = df['Nome'].astype(str)
+                df['Cognome'] = df['Cognome'].astype(str)
+                if 'Email' in df.columns:
+                    df['Email'] = df['Email'].astype(str)
                 
                 # Eseguo l'integrazione
                 df = match_students_data(df, enrolled_students)
@@ -409,6 +455,9 @@ def load_enrolled_students_data():
 def match_students_data(df_presences, df_enrolled):
     """
     Integra i dati degli studenti iscritti nel dataframe delle presenze.
+    L'accoppiamento avviene esclusivamente per nome e cognome, considerando che possono essere
+    scritti con diverse capitalizzazioni. Il codice fiscale e l'email vengono presi dal file 
+    degli iscritti.
     
     Args:
         df_presences: DataFrame con i dati delle presenze
@@ -440,7 +489,7 @@ def match_students_data(df_presences, df_enrolled):
             return df_presences
             
         # Verifico che le colonne degli iscritti esistano
-        required_enrolled_cols = ['Cognome', 'Nome', 'CodiceFiscale', 'Codice_Classe_di_concorso']
+        required_enrolled_cols = ['Cognome', 'Nome', 'CodiceFiscale']
         if not all(col in df_enrolled.columns for col in required_enrolled_cols):
             missing = [col for col in required_enrolled_cols if col not in df_enrolled.columns]
             st.warning(f"I dati degli iscritti non contengono tutte le colonne necessarie: mancano {missing}")
@@ -450,101 +499,193 @@ def match_students_data(df_presences, df_enrolled):
         
         # Creo una copia del dataframe per non modificare l'originale
         result_df = df_presences.copy()
+
+        # Rinomina automatica delle colonne se necessario
+        if 'Nome (del corsista)' in result_df.columns:
+            result_df['Nome'] = result_df['Nome (del corsista)']
+        if 'Cognome (del corsista)' in result_df.columns:
+            result_df['Cognome'] = result_df['Cognome (del corsista)']
+
+        # Funzione per normalizzare nomi/cognomi (rimuove spazi extra, rende tutto lowercase e rimuove caratteri speciali)
+        def normalize_name(name):
+            if not isinstance(name, str):
+                return ""
+            # Converti in minuscolo e rimuovi spazi all'inizio e alla fine
+            name = name.lower().strip()
+            # Rimuovi caratteri speciali e accenti
+            name = ''.join(c for c in unicodedata.normalize('NFKD', name) if not unicodedata.combining(c))
+            # Sostituisci spazi multipli con uno singolo
+            name = ' '.join(name.split())
+            return name
+
+        # Preparo colonne normalizzate per il matching
+        result_df['Nome_norm'] = result_df['Nome'].apply(normalize_name)
+        result_df['Cognome_norm'] = result_df['Cognome'].apply(normalize_name)
+        df_enrolled['Nome_norm'] = df_enrolled['Nome'].apply(normalize_name)
+        df_enrolled['Cognome_norm'] = df_enrolled['Cognome'].apply(normalize_name)
     
-        # Preparo colonna per il matching
-        result_df['NomeCognome'] = result_df['Nome'].str.lower() + ' ' + result_df['Cognome'].str.lower()
+        # Colonne da integrare dal file degli iscritti, inclusi sempre CF ed Email
+        base_cols = ['CodiceFiscale', 'Email'] # Questi sono sempre da prendere dagli iscritti
+        other_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
+                     'Dipartimento', 'LogonName', 'Matricola']
+        
+        # Filtra per includere solo colonne esistenti nel dataframe iscritti
+        available_other_cols = [col for col in other_cols if col in df_enrolled.columns]
+        cols_to_merge = base_cols + available_other_cols
     
-        # Colonne da integrare dal file degli iscritti
-        # Assicuriamoci di includere solo colonne che esistono nel DataFrame degli iscritti
-        available_cols = [col for col in ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
-                     'Dipartimento', 'LogonName', 'Matricola'] if col in df_enrolled.columns]
-                     
-        cols_to_merge = available_cols
+        # Contatore per statistiche
+        matched_count = 0
     
-        # Contatori per statistiche
-        matched_by_cf = 0
-        matched_by_name = 0
-    
-        # Cerca corrispondenze in base al Codice Fiscale (metodo principale e più affidabile)
-        if 'CodiceFiscale' in result_df.columns and 'CodiceFiscale' in df_enrolled.columns:
-            # Creo un DataFrame con solo le righe con CF compilato
-            cf_mask = result_df['CodiceFiscale'].notna() & (result_df['CodiceFiscale'] != '')
-            with_cf = result_df[cf_mask]
+        # Flag per tracciare se i nomi sembrano essere invertiti
+        names_seem_inverted = False
+        test_count = min(20, len(result_df))  # Controlliamo al massimo 20 record
+        inverted_matches = 0
+        
+        # Test preliminare sui primi record per verificare se i nomi sono invertiti
+        for idx, row in result_df.head(test_count).iterrows():
+            # Provo con il matching invertito (nome<->cognome)
+            cognome_test = row['Nome_norm'] 
+            nome_test = row['Cognome_norm']
             
-            # Effettuo il merge per Codice Fiscale (lascia i valori originali se non trova match)
-            if not with_cf.empty:
-                merged_cf = pd.merge(
-                    with_cf, 
-                    df_enrolled[cols_to_merge + ['CodiceFiscale']], 
-                    on='CodiceFiscale', 
-                    how='left',
-                    suffixes=('', '_iscritti')
-                )
+            # Cerco corrispondenza con nomi invertiti
+            inverted_match = df_enrolled[(df_enrolled['Nome_norm'] == nome_test) & 
+                                        (df_enrolled['Cognome_norm'] == cognome_test)]
+            
+            if not inverted_match.empty:
+                inverted_matches += 1
+        
+        # Se troviamo più match invertiti che normali, probabilmente i nomi sono invertiti
+        if inverted_matches > 0:
+            st.warning(f"Rilevati {inverted_matches} possibili match con nome e cognome invertiti. Proverò entrambe le combinazioni.")
+            names_seem_inverted = True
+            
+        # Eseguo il matching per nome e cognome normalizzati
+        for idx, row in result_df.iterrows():
+            nome_norm = row['Nome_norm'] 
+            cognome_norm = row['Cognome_norm']
+            
+            # Tento prima il match normale
+            matches = df_enrolled[(df_enrolled['Nome_norm'] == nome_norm) & 
+                                 (df_enrolled['Cognome_norm'] == cognome_norm)]
+            
+            # Se non trovo match e il test preliminare suggerisce nomi invertiti, provo invertendo
+            if matches.empty and names_seem_inverted:
+                matches = df_enrolled[(df_enrolled['Nome_norm'] == cognome_norm) & 
+                                     (df_enrolled['Cognome_norm'] == nome_norm)]
+                                     
+                if not matches.empty:
+                    st.info(f"Match trovato invertendo nome e cognome per: {row.get('Nome')} {row.get('Cognome')}")
+            
+            if not matches.empty:
+                # Se trovo corrispondenza, integro tutti i dati richiesti
+                match_row = matches.iloc[0]  # Prendo il primo match in caso di più corrispondenze
                 
-                # Aggiorno il DataFrame risultante con le righe contenenti CF
-                matched_indices = []
-                for idx, row in merged_cf.iterrows():
-                    if idx in result_df.index:
-                        match_found = False
-                        for col in cols_to_merge:
-                            if col in merged_cf.columns and pd.notna(row[col]):
-                                result_df.loc[idx, col] = row[col]
-                                match_found = True
-                        if match_found:
-                            matched_indices.append(idx)
-                            matched_by_cf += 1
+                for col in cols_to_merge:
+                    if col in df_enrolled.columns and pd.notna(match_row[col]):
+                        result_df.loc[idx, col] = match_row[col]
+                
+                matched_count += 1
     
-        # Per le righe senza corrispondenza per CF, provo con Nome e Cognome
-        no_match_mask = ~result_df.index.isin(matched_indices) if 'matched_indices' in locals() else pd.Series(True, index=result_df.index)
-        if no_match_mask.any():
-            no_match_df = result_df[no_match_mask].copy()
-            merged_name = pd.merge(
-                no_match_df,
-                df_enrolled[cols_to_merge + ['NomeCognome']],
-                on='NomeCognome',
-                how='left',
-                suffixes=('', '_iscritti')
-            )
-            
-            # Aggiorno il DataFrame risultante con le righe contenenti solo Nome/Cognome
-            for idx, row in merged_name.iterrows():
-                if idx in result_df.index:
-                    match_found = False
-                    for col in cols_to_merge:
-                        if col in merged_name.columns and pd.notna(row[col]):
-                            result_df.loc[idx, col] = row[col]
-                            match_found = True
-                    if match_found:
-                        matched_by_name += 1
-    
-        # Elimino la colonna temporanea
-        if 'NomeCognome' in result_df.columns:
-            result_df = result_df.drop(columns=['NomeCognome'])
+        # Elimino le colonne temporanee per la normalizzazione
+        if 'Nome_norm' in result_df.columns:
+            result_df = result_df.drop(columns=['Nome_norm'])
+        if 'Cognome_norm' in result_df.columns:
+            result_df = result_df.drop(columns=['Cognome_norm'])
         
         # Mostro statistiche sul matching
         total_records = len(result_df)
-        total_matches = matched_by_cf + matched_by_name
         
         # Verifica e mostra statistiche di integrazione dettagliate
+        cf_integrati = result_df['CodiceFiscale'].notna().sum() if 'CodiceFiscale' in result_df.columns else 0
+        email_integrati = result_df['Email'].notna().sum() if 'Email' in result_df.columns else 0
         percorso_integrati = result_df['Percorso'].notna().sum() if 'Percorso' in result_df.columns else 0
         classe_concorso_integrati = result_df['Codice_Classe_di_concorso'].notna().sum() if 'Codice_Classe_di_concorso' in result_df.columns else 0
         
-        if percorso_integrati == 0 and 'Percorso' in result_df.columns:
-            st.error(f"ERRORE CRITICO: La colonna 'Percorso' esiste ma non contiene dati validi!")
-        
-        st.warning(f"Matching studenti: {total_matches}/{total_records} record abbinati "
-                f"({matched_by_cf} tramite CF, {matched_by_name} tramite Nome/Cognome)")
-        st.warning(f"Colonne integrate: Percorso={percorso_integrati}, Classe Concorso={classe_concorso_integrati}")
-        
-        # Verifica se ci sono record nel dataframe dei presenti che hanno corrispondenza negli iscritti
-        if 'CodiceFiscale' in result_df.columns and 'CodiceFiscale' in df_enrolled.columns:
-            cf_in_comune = set(result_df['CodiceFiscale'].dropna()) & set(df_enrolled['CodiceFiscale'].dropna())
-            st.warning(f"Codici fiscali in comune tra presenze e iscritti: {len(cf_in_comune)}")
+        # Verifica dell'efficacia del matching
+        if matched_count == 0:
+            st.error("ERRORE CRITICO: Nessun record è stato abbinato tramite Nome e Cognome!")
+            
+            # Analisi delle possibili cause di fallimento
+            st.warning("Analisi dei problemi di matching:")
+            
+            # Verifica se il problema è con la normalizzazione
+            st.warning("Debug normalizzazione:")
+            for idx, row in result_df.head(3).iterrows():
+                nome_orig = row.get('Nome', 'N/A')
+                cognome_orig = row.get('Cognome', 'N/A')
+                nome_norm = row.get('Nome_norm', 'N/A')
+                cognome_norm = row.get('Cognome_norm', 'N/A')
+                st.write(f"Record presenze {idx}: Nome='{nome_orig}' → '{nome_norm}', Cognome='{cognome_orig}' → '{cognome_norm}'")
+            
+            for idx, row in df_enrolled.head(3).iterrows():
+                nome_orig = row.get('Nome', 'N/A')
+                cognome_orig = row.get('Cognome', 'N/A')
+                nome_norm = row.get('Nome_norm', 'N/A')
+                cognome_norm = row.get('Cognome_norm', 'N/A')
+                st.write(f"Record iscritti {idx}: Nome='{nome_orig}' → '{nome_norm}', Cognome='{cognome_orig}' → '{cognome_norm}'")
+            
+            # Perché non c'è match? Proviamo a invertire nome e cognome
+            st.warning("Tentativo di accoppiamento invertendo nome e cognome:")
+            test_matches = 0
+            for idx, row in result_df.head(5).iterrows():
+                # Invertiamo nome e cognome
+                cognome_norm = row['Nome_norm']
+                nome_norm = row['Cognome_norm']
+                matches = df_enrolled[(df_enrolled['Nome_norm'] == nome_norm) & 
+                                     (df_enrolled['Cognome_norm'] == cognome_norm)]
+                if not matches.empty:
+                    test_matches += 1
+                    st.success(f"Match trovato invertendo nome e cognome! Record presenze {idx}: {row.get('Nome')} {row.get('Cognome')} → Record iscritti: {matches.iloc[0].get('Nome')} {matches.iloc[0].get('Cognome')}")
+            
+            if test_matches > 0:
+                st.warning(f"Trovati {test_matches} match invertendo nome e cognome. Probabile problema: nome e cognome sono invertiti nel file di input!")
+            
+            # Esempio dei primi 5 record presenze e iscritti per comparazione manuale
+            st.warning("Esempi di record di presenza (primi 5):")
+            for idx, row in result_df.head(5).iterrows():
+                st.write(f"Record {idx}: Nome={row.get('Nome', 'N/A')}, Cognome={row.get('Cognome', 'N/A')}")
+            
+            st.warning("Esempi di record di iscritti (primi 5):")
+            for idx, row in df_enrolled.head(5).iterrows():
+                st.write(f"Record {idx}: Nome={row.get('Nome', 'N/A')}, Cognome={row.get('Cognome', 'N/A')}")
+                
+        else:
+            match_percentage = (matched_count / total_records) * 100
+            st.success(f"Matching Nome-Cognome: {matched_count}/{total_records} record abbinati ({match_percentage:.1f}%)")
+            
+            # Dettagli integrazione
+            st.info(f"Colonne integrate dai dati iscritti:")
+            st.info(f"- Codici Fiscali: {cf_integrati}/{total_records} ({cf_integrati/total_records*100:.1f}%)")
+            st.info(f"- Email: {email_integrati}/{total_records} ({email_integrati/total_records*100:.1f}%)")
+            st.info(f"- Percorso: {percorso_integrati}/{total_records} ({percorso_integrati/total_records*100:.1f}%)")
+            st.info(f"- Classe Concorso: {classe_concorso_integrati}/{total_records} ({classe_concorso_integrati/total_records*100:.1f}%)")
         
         return result_df
     except Exception as e:
         st.error(f"Errore durante il matching dei dati degli iscritti: {e}")
         st.exception(e)
+        
+        # In caso di errore, mostro informazioni diagnostiche aggiuntive
+        st.error("Dettagli diagnostici per aiutare a risolvere il problema:")
+        
+        try:
+            # Verifica presenza colonne
+            presence_cols = df_presences.columns.tolist()
+            enrolled_cols = df_enrolled.columns.tolist()
+            st.info(f"Colonne presenze ({len(presence_cols)}): {', '.join(presence_cols)}")
+            st.info(f"Colonne iscritti ({len(enrolled_cols)}): {', '.join(enrolled_cols)}")
+            
+            # Verifica valori unici di nome e cognome
+            if 'Nome' in df_presences.columns and 'Cognome' in df_presences.columns:
+                unique_names_presences = df_presences[['Nome', 'Cognome']].drop_duplicates().shape[0]
+                st.info(f"Record unici Nome-Cognome nelle presenze: {unique_names_presences}")
+                
+            if 'Nome' in df_enrolled.columns and 'Cognome' in df_enrolled.columns:
+                unique_names_enrolled = df_enrolled[['Nome', 'Cognome']].drop_duplicates().shape[0]
+                st.info(f"Record unici Nome-Cognome negli iscritti: {unique_names_enrolled}")
+        except Exception as debug_e:
+            st.error(f"Errore durante la diagnostica: {debug_e}")
+            
         return df_presences
 
 @st.cache_data
@@ -647,11 +788,34 @@ def load_multiple_files(uploaded_files):
                 df = process_datetime_field(df, 'Ora di inizio')
                 
                 # Mappatura delle altre colonne
-                if 'Denominazione dell\'attività' in columns or 'Denominazione dell\'attività' in columns:
-                    denominazione_col = 'Denominazione dell\'attività' if 'Denominazione dell\'attività' in columns else 'Denominazione dell\'attività'
-                    df.rename(columns={denominazione_col: 'DenominazioneAttività'}, inplace=True)
-                    st.info(f"Rinominata colonna '{denominazione_col}' in 'DenominazioneAttività'")
-                    
+                # Verifica tutte le possibili varianti del nome della colonna dell'attività
+                activity_col_variants = [
+                    'Denominazione dell\'attività',
+                    'Denominazione dell\'attività',
+                    'Denominazione dell\'attivita',
+                    'Denominazione dell\'attivitá',
+                    'Denominazione dell\'attività',
+                    'Denominazione dell\'attivita\'',
+                    'Denominazione dell attività',
+                    'Denominazione dell attivita'
+                ]
+                
+                activity_col_found = None
+                for variant in activity_col_variants:
+                    if variant in columns:
+                        activity_col_found = variant
+                        break
+                
+                # Cerca anche varianti senza apostrofo
+                if not activity_col_found:
+                    possible_activity_cols = [col for col in columns if 'attivit' in col.lower() and 'denominazione' in col.lower()]
+                    if possible_activity_cols:
+                        activity_col_found = possible_activity_cols[0]
+                
+                if activity_col_found:
+                    df.rename(columns={activity_col_found: 'DenominazioneAttività'}, inplace=True)
+                    st.info(f"Rinominata colonna '{activity_col_found}' in 'DenominazioneAttività'")
+                
                 # Gestione colonna Nome con opzioni alternative
                 if 'Nome (del corsista)' in columns:
                     df.rename(columns={'Nome (del corsista)': 'Nome'}, inplace=True)
@@ -667,10 +831,27 @@ def load_multiple_files(uploaded_files):
                 if 'Tipo di percorso' in columns:
                     df.rename(columns={'Tipo di percorso': 'DenominazionePercorso'}, inplace=True)
                     st.info(f"Rinominata colonna 'Tipo di percorso' in 'DenominazionePercorso'")
+                
+                # Gestione colonna Percorso alternativa
+                if 'Tipo di percorso' not in columns and 'Denominazione del percorso' in columns:
+                    df.rename(columns={'Denominazione del percorso': 'DenominazionePercorso'}, inplace=True)
+                    st.info(f"Rinominata colonna 'Denominazione del percorso' in 'DenominazionePercorso'")
                     
                 if 'Posta elettronica' in columns:
                     df.rename(columns={'Posta elettronica': 'Email'}, inplace=True)
                     st.info(f"Rinominata colonna 'Posta elettronica' in 'Email'")
+                
+                # Usa email da posta elettronica se disponibile
+                if 'Posta elettronica' not in columns and 'Email' not in df.columns and 'Posta elettronica' in columns:
+                    df.rename(columns={'Posta elettronica': 'Email'}, inplace=True)
+                    st.info(f"Rinominata colonna 'Posta elettronica' in 'Email'")
+                
+                # Mappatura alternativa dell'email
+                if 'Email' not in df.columns and any('mail' in col.lower() for col in columns):
+                    email_cols = [col for col in columns if 'mail' in col.lower()]
+                    if email_cols:
+                        df.rename(columns={email_cols[0]: 'Email'}, inplace=True)
+                        st.info(f"Rinominata colonna '{email_cols[0]}' in 'Email'")
                     
                 if 'ID' in columns:
                     df['CodiceFiscale'] = df['ID']  # Usiamo ID come sostituto del codice fiscale se non c'è altro
@@ -681,7 +862,7 @@ def load_multiple_files(uploaded_files):
                 failed_files += 1
                 continue
                 
-            # Verifica requisiti minimi
+            # Verifica requisiti minimi (solo data e ora sono obbligatorie inizialmente)
             required_cols = ['DataPresenza', 'OraPresenza']
             missing_cols = [col for col in required_cols if col not in df.columns]
             
@@ -690,10 +871,17 @@ def load_multiple_files(uploaded_files):
                 failed_files += 1
                 continue
                 
+            # Assicuriamoci che ci siano Nome e Cognome per l'integrazione con iscritti
+            if 'Nome' not in df.columns:
+                df['Nome'] = ''
+            if 'Cognome' not in df.columns:
+                df['Cognome'] = ''
+                
             # Verifica presenza della colonna percorso (che adesso potrebbe venire da "Tipo di percorso")
             if not ('DenominazionePercorso' in df.columns or 'percoro' in df.columns):
-                st.warning(f"File {uploaded_file.name}: manca una colonna per il percorso. Questo potrebbe causare problemi nell'analisi.")
-                # Non blocchiamo l'elaborazione, ma avvisiamo l'utente
+                st.warning(f"File {uploaded_file.name}: manca una colonna per il percorso. Verrà aggiunta dai dati degli iscritti.")
+                # Aggiungo una colonna vuota che verrà popolata durante l'integrazione con i dati iscritti
+                df['Percorso'] = None
                 
             # Aggiungi il dataframe alla lista
             all_dataframes.append(df)
@@ -716,13 +904,38 @@ def load_multiple_files(uploaded_files):
         if failed_files > 0:
             st.warning(f"{failed_files} file non sono stati processati a causa di errori")
             
-        # Assicuriamoci che tutte le colonne richieste siano presenti
+        # Integrazione con i dati degli iscritti prima di verificare colonne obbligatorie
+        # Carica i dati degli iscritti
+        st.info("Caricamento dati iscritti per integrazione con i file caricati...")
+        enrolled_students = load_enrolled_students_data()
+        
+        if not enrolled_students.empty:
+            st.success(f"Dati iscritti caricati con successo: {len(enrolled_students)} iscritti trovati.")
+            
+            # Integra i dati degli iscritti prima della verifica
+            with st.spinner("Integrazione anticipata dei dati degli iscritti in corso..."):
+                st.info("Integrando i dati degli iscritti per ottenere campi obbligatori mancanti...")
+                
+                # Assicuro che i campi Nome e Cognome siano string per evitare problemi
+                combined_df['Nome'] = combined_df['Nome'].astype(str)
+                combined_df['Cognome'] = combined_df['Cognome'].astype(str)
+                
+                # Eseguo l'integrazione
+                combined_df = match_students_data(combined_df, enrolled_students)
+        else:
+            st.warning("Non è stato possibile caricare i dati degli iscritti. Le informazioni aggiuntive degli studenti non saranno disponibili.")
+        
+        # Ora verifichiamo se la colonna CodiceFiscale è presente o è stata aggiunta
         if 'CodiceFiscale' not in combined_df.columns:
-            st.error("La colonna CodiceFiscale non è presente nei dati combinati.")
+            st.warning("La colonna CodiceFiscale non è presente nei dati originali e non è stata aggiunta dai dati iscritti.")
             # Se non c'è il CodiceFiscale, proviamo a usare l'ID come fallback
             if 'ID' in combined_df.columns:
                 combined_df['CodiceFiscale'] = combined_df['ID']
                 st.warning("Usato ID come sostituto per CodiceFiscale")
+            else:
+                # Creiamo una colonna vuota - i record senza CF saranno rimossi più tardi
+                combined_df['CodiceFiscale'] = None
+                st.warning("Creata colonna CodiceFiscale vuota. I record senza CodiceFiscale saranno rimossi in seguito.")
                 
         # Aggiungiamo colonne vuote per quelle non presenti
         for col in ['Nome', 'Cognome', 'Email']:
@@ -848,62 +1061,37 @@ def load_multiple_files(uploaded_files):
         else:
             st.warning("Non è stato possibile caricare i dati dei CFU. I CFU non saranno disponibili.")
         
-        # Carica i dati degli iscritti
-        st.info("Caricamento dati iscritti per integrazione con i file caricati...")
-        enrolled_students = load_enrolled_students_data()
+        # L'integrazione con i dati degli iscritti è già stata fatta all'inizio
+        # Qui possiamo verificare i risultati dell'integrazione
         
-        if not enrolled_students.empty:
-            st.success(f"Dati iscritti caricati con successo: {len(enrolled_students)} iscritti trovati.")
+        #         # Verifica se l'integrazione è avvenuta correttamente
+        enrolled_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 'Dipartimento', 'Matricola']
+        integrated_cols = [col for col in enrolled_cols if col in combined_df.columns]
+        if integrated_cols:
+            for col in integrated_cols:
+                non_null_count = combined_df[col].notna().sum()
+                st.info(f"Integrazione colonna '{col}': {non_null_count} record non vuoti su {len(combined_df)} ({non_null_count/len(combined_df)*100:.1f}%)")
             
-            # Integra i dati degli iscritti
-            with st.spinner("Integrazione dati degli iscritti in corso..."):
-                st.info(f"Integrazione di {enrolled_students.shape[0]} record di iscritti nei dati presenze...")
-                
-                # Preparo i dati per il matching
-                # Normalizzazione di Nome e Cognome per migliorare il matching
-                if 'Nome' in combined_df.columns:
-                    combined_df['Nome'] = combined_df['Nome'].astype(str).str.strip().str.lower().str.title()
-                if 'Cognome' in combined_df.columns:
-                    combined_df['Cognome'] = combined_df['Cognome'].astype(str).str.strip().str.lower().str.title()
-                
-                if 'Nome' in enrolled_students.columns:
-                    enrolled_students['Nome'] = enrolled_students['Nome'].astype(str).str.strip().str.lower().str.title()
-                if 'Cognome' in enrolled_students.columns:
-                    enrolled_students['Cognome'] = enrolled_students['Cognome'].astype(str).str.strip().str.lower().str.title()
-                
-                # Eseguo l'integrazione
-                combined_df = match_students_data(combined_df, enrolled_students)
-                
-                # Verifica se l'integrazione è avvenuta correttamente
-                enrolled_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 'Dipartimento', 'Matricola']
-                integrated_cols = [col for col in enrolled_cols if col in combined_df.columns]
-                if integrated_cols:
-                    for col in integrated_cols:
-                        non_null_count = combined_df[col].notna().sum()
-                        st.info(f"Integrazione colonna '{col}': {non_null_count} record non vuoti su {len(combined_df)} ({non_null_count/len(combined_df)*100:.1f}%)")
-                    
-                    # Se l'integrazione è a zero o molto bassa, segnala un problema
-                    if all(combined_df[col].notna().sum() == 0 for col in integrated_cols):
-                        st.error("ERRORE: Nessuna integrazione dei dati iscritti è avvenuta!")
+            # Se l'integrazione è a zero o molto bassa, segnala un problema
+            if all(combined_df[col].notna().sum() == 0 for col in integrated_cols):
+                st.error("ERRORE: Nessuna integrazione dei dati iscritti è avvenuta!")
                         
-                        # Analisi delle possibili cause
-                        if 'CodiceFiscale' in combined_df.columns and 'CodiceFiscale' in enrolled_students.columns:
-                            df_cf = set(combined_df['CodiceFiscale'].astype(str).str.strip().unique())
-                            enrolled_cf = set(enrolled_students['CodiceFiscale'].astype(str).str.strip().unique())
-                            common_cf = df_cf.intersection(enrolled_cf)
-                            
-                            st.error(f"Codici fiscali comuni tra i dataset: {len(common_cf)} su {len(df_cf)} nei dati presenze e {len(enrolled_cf)} negli iscritti")
-                            
-                            if len(common_cf) > 0:
-                                st.warning("Analisi di alcune corrispondenze (primi 3 CF in comune):")
-                                for cf in list(common_cf)[:3]:
-                                    st.write(f"CF: {cf}")
-                                    st.write("Record presenza:", combined_df[combined_df['CodiceFiscale'] == cf].iloc[0])
-                                    st.write("Record iscritto:", enrolled_students[enrolled_students['CodiceFiscale'] == cf].iloc[0])
-                else:
-                    st.error("ATTENZIONE: Nessuna colonna degli iscritti è stata integrata nei dati!")
+                # Analisi delle possibili cause
+                if 'CodiceFiscale' in combined_df.columns and 'CodiceFiscale' in enrolled_students.columns:
+                    df_cf = set(combined_df['CodiceFiscale'].astype(str).str.strip().unique())
+                    enrolled_cf = set(enrolled_students['CodiceFiscale'].astype(str).str.strip().unique())
+                    common_cf = df_cf.intersection(enrolled_cf)
+                    
+                    st.error(f"Codici fiscali comuni tra i dataset: {len(common_cf)} su {len(df_cf)} nei dati presenze e {len(enrolled_cf)} negli iscritti")
+                    
+                    if len(common_cf) > 0:
+                        st.warning("Analisi di alcune corrispondenze (primi 3 CF in comune):")
+                        for cf in list(common_cf)[:3]:
+                            st.write(f"CF: {cf}")
+                            st.write("Record presenza:", combined_df[combined_df['CodiceFiscale'] == cf].iloc[0])
+                            st.write("Record iscritto:", enrolled_students[enrolled_students['CodiceFiscale'] == cf].iloc[0])
         else:
-            st.warning("Non è stato possibile caricare i dati degli iscritti. Le informazioni aggiuntive degli studenti non saranno disponibili.")
+            st.error("ATTENZIONE: Nessuna colonna degli iscritti è stata integrata nei dati!")
             
         st.success("Elaborazione del caricamento multiplo completata.")
         return combined_df
