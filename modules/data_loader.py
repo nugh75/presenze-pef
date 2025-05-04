@@ -6,6 +6,7 @@ import unicodedata  # Per la normalizzazione dei caratteri Unicode
 import difflib
 import re
 import os  # Aggiunto per verificare l'esistenza dei file
+from modules.utils import normalize_name_advanced  # Importo la funzione di normalizzazione avanzata
 
 def normalize_generic(name):
     """Rimuove 'art.13' e spazi dalle stringhe"""
@@ -514,23 +515,17 @@ def match_students_data(df_presences, df_enrolled):
         if 'Cognome (del corsista)' in result_df.columns:
             result_df['Cognome'] = result_df['Cognome (del corsista)']
 
-        # Funzione per normalizzare nomi/cognomi (rimuove spazi extra, rende tutto lowercase e rimuove caratteri speciali)
-        def normalize_name(name):
-            if not isinstance(name, str):
-                return ""
-            # Converti in minuscolo e rimuovi spazi all'inizio e alla fine
-            name = name.lower().strip()
-            # Rimuovi caratteri speciali e accenti
-            name = ''.join(c for c in unicodedata.normalize('NFKD', name) if not unicodedata.combining(c))
-            # Sostituisci spazi multipli con uno singolo
-            name = ' '.join(name.split())
-            return name
-
-        # Preparo colonne normalizzate per il matching
-        result_df['Nome_norm'] = result_df['Nome'].apply(normalize_name)
-        result_df['Cognome_norm'] = result_df['Cognome'].apply(normalize_name)
-        df_enrolled['Nome_norm'] = df_enrolled['Nome'].apply(normalize_name)
-        df_enrolled['Cognome_norm'] = df_enrolled['Cognome'].apply(normalize_name)
+        # Utilizzo la funzione di normalizzazione avanzata per nomi e cognomi
+        
+        # Preparo colonne normalizzate per il matching utilizzando la funzione avanzata
+        result_df['Nome_norm'] = result_df['Nome'].apply(normalize_name_advanced)
+        result_df['Cognome_norm'] = result_df['Cognome'].apply(normalize_name_advanced)
+        df_enrolled['Nome_norm'] = df_enrolled['Nome'].apply(normalize_name_advanced)
+        df_enrolled['Cognome_norm'] = df_enrolled['Cognome'].apply(normalize_name_advanced)
+        
+        # Salvo anche le versioni originali prima della normalizzazione per confronto
+        result_df['Nome_originale'] = result_df['Nome']
+        result_df['Cognome_originale'] = result_df['Cognome']
     
         # Colonne da integrare dal file degli iscritti, inclusi sempre CF ed Email
         base_cols = ['CodiceFiscale', 'Email'] # Questi sono sempre da prendere dagli iscritti
@@ -567,26 +562,56 @@ def match_students_data(df_presences, df_enrolled):
             st.warning(f"Rilevati {inverted_matches} possibili match con nome e cognome invertiti. Proverò entrambe le combinazioni.")
             names_seem_inverted = True
             
+        # Creo colonne per tracciare il metodo di matching e cambiamenti nella normalizzazione
+        result_df['MatchMethod'] = 'Nessuna Corrispondenza'
+        result_df['NomeDiversoDaOriginale'] = False
+        result_df['CognomeDiversoDaOriginale'] = False
+        
+        # Statistiche di normalizzazione
+        nomi_normalizzati = 0
+        cognomi_normalizzati = 0
+
         # Eseguo il matching per nome e cognome normalizzati
         for idx, row in result_df.iterrows():
             nome_norm = row['Nome_norm'] 
             cognome_norm = row['Cognome_norm']
+            nome_originale = row['Nome_originale']
+            cognome_originale = row['Cognome_originale']
             
+            # Verifica se la normalizzazione ha cambiato il valore
+            if nome_norm != nome_originale.lower().strip():
+                result_df.loc[idx, 'NomeDiversoDaOriginale'] = True
+                nomi_normalizzati += 1
+                
+            if cognome_norm != cognome_originale.lower().strip():
+                result_df.loc[idx, 'CognomeDiversoDaOriginale'] = True
+                cognomi_normalizzati += 1
+                
             # Tento prima il match normale
             matches = df_enrolled[(df_enrolled['Nome_norm'] == nome_norm) & 
                                  (df_enrolled['Cognome_norm'] == cognome_norm)]
             
+            match_method = 'Standard'
+            
             # Se non trovo match e il test preliminare suggerisce nomi invertiti, provo invertendo
             if matches.empty and names_seem_inverted:
-                matches = df_enrolled[(df_enrolled['Nome_norm'] == cognome_norm) & 
-                                     (df_enrolled['Cognome_norm'] == nome_norm)]
+                inverted_matches = df_enrolled[(df_enrolled['Nome_norm'] == cognome_norm) & 
+                                             (df_enrolled['Cognome_norm'] == nome_norm)]
                                      
-                if not matches.empty:
-                    st.info(f"Match trovato invertendo nome e cognome per: {row.get('Nome')} {row.get('Cognome')}")
+                if not inverted_matches.empty:
+                    matches = inverted_matches
+                    match_method = 'NomeCognomeInvertiti'
             
             if not matches.empty:
                 # Se trovo corrispondenza, integro tutti i dati richiesti
                 match_row = matches.iloc[0]  # Prendo il primo match in caso di più corrispondenze
+                
+                # Registro il metodo di matching utilizzato
+                result_df.loc[idx, 'MatchMethod'] = match_method
+                
+                # Salvo i dati dello studente corrispondente per confronto
+                result_df.loc[idx, 'NomeIscritto'] = match_row['Nome']
+                result_df.loc[idx, 'CognomeIscritto'] = match_row['Cognome']
                 
                 for col in cols_to_merge:
                     if col in df_enrolled.columns and pd.notna(match_row[col]):
@@ -594,12 +619,6 @@ def match_students_data(df_presences, df_enrolled):
                 
                 matched_count += 1
     
-        # Elimino le colonne temporanee per la normalizzazione
-        if 'Nome_norm' in result_df.columns:
-            result_df = result_df.drop(columns=['Nome_norm'])
-        if 'Cognome_norm' in result_df.columns:
-            result_df = result_df.drop(columns=['Cognome_norm'])
-        
         # Mostro statistiche sul matching
         total_records = len(result_df)
         
@@ -608,6 +627,14 @@ def match_students_data(df_presences, df_enrolled):
         email_integrati = result_df['Email'].notna().sum() if 'Email' in result_df.columns else 0
         percorso_integrati = result_df['Percorso'].notna().sum() if 'Percorso' in result_df.columns else 0
         classe_concorso_integrati = result_df['Codice_Classe_di_concorso'].notna().sum() if 'Codice_Classe_di_concorso' in result_df.columns else 0
+        
+        # Statistiche sulla normalizzazione dei nomi
+        nome_norm_count = result_df['NomeDiversoDaOriginale'].sum() if 'NomeDiversoDaOriginale' in result_df.columns else 0
+        cognome_norm_count = result_df['CognomeDiversoDaOriginale'].sum() if 'CognomeDiversoDaOriginale' in result_df.columns else 0
+        
+        # Statistiche sul metodo di matching
+        match_standard = result_df[result_df['MatchMethod'] == 'Standard'].shape[0] if 'MatchMethod' in result_df.columns else 0
+        match_invertiti = result_df[result_df['MatchMethod'] == 'NomeCognomeInvertiti'].shape[0] if 'MatchMethod' in result_df.columns else 0
         
         # Verifica dell'efficacia del matching
         if matched_count == 0:
@@ -667,7 +694,40 @@ def match_students_data(df_presences, df_enrolled):
             st.info(f"- Email: {email_integrati}/{total_records} ({email_integrati/total_records*100:.1f}%)")
             st.info(f"- Percorso: {percorso_integrati}/{total_records} ({percorso_integrati/total_records*100:.1f}%)")
             st.info(f"- Classe Concorso: {classe_concorso_integrati}/{total_records} ({classe_concorso_integrati/total_records*100:.1f}%)")
+            
+            # Informazioni sulla normalizzazione
+            st.info("Statistiche di normalizzazione nomi:")
+            st.info(f"- Nomi normalizzati: {nome_norm_count}/{total_records} ({nome_norm_count/total_records*100:.1f}%)")
+            st.info(f"- Cognomi normalizzati: {cognome_norm_count}/{total_records} ({cognome_norm_count/total_records*100:.1f}%)")
+            
+            # Informazioni sul metodo di matching
+            st.info("Metodi di matching utilizzati:")
+            st.info(f"- Match standard: {match_standard}/{matched_count} ({match_standard/matched_count*100 if matched_count > 0 else 0:.1f}%)")
+            st.info(f"- Match con nome/cognome invertiti: {match_invertiti}/{matched_count} ({match_invertiti/matched_count*100 if matched_count > 0 else 0:.1f}%)")
+            
+            # Mostrare alcuni esempi di normalizzazione
+            if nome_norm_count > 0 or cognome_norm_count > 0:
+                st.info("Esempi di normalizzazione (primi 5 record normalizzati):")
+                
+                # Filtro per i record normalizzati
+                normalizzati = result_df[(result_df['NomeDiversoDaOriginale'] == True) | (result_df['CognomeDiversoDaOriginale'] == True)]
+                
+                for idx, row in normalizzati.head(5).iterrows():
+                    if row['NomeDiversoDaOriginale']:
+                        st.write(f"Nome: '{row['Nome_originale']}' → '{row['Nome_norm']}'")
+                    if row['CognomeDiversoDaOriginale']:
+                        st.write(f"Cognome: '{row['Cognome_originale']}' → '{row['Cognome_norm']}'")
+                    if 'MatchMethod' in row and row['MatchMethod'] != 'Nessuna Corrispondenza':
+                        st.write(f"Match con: {row.get('NomeIscritto', '')} {row.get('CognomeIscritto', '')}")
+                    st.write("---")
         
+        # Elimino le colonne temporanee per la normalizzazione
+        temp_columns = ['Nome_norm', 'Cognome_norm']
+        for col in temp_columns:
+            if col in result_df.columns:
+                result_df = result_df.drop(columns=[col])
+        
+        # Manteniamo invece le colonne diagnostiche, potrebbero essere utili per il debug
         return result_df
     except Exception as e:
         st.error(f"Errore durante il matching dei dati degli iscritti: {e}")

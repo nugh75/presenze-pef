@@ -3,6 +3,59 @@ import re
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, time
+import unicodedata
+
+def normalize_name_advanced(name):
+    """
+    Normalizza un nome rimuovendo accenti, apostrofi e altri caratteri speciali.
+    Standardizza le variazioni comuni per migliorare il matching dei nomi degli studenti.
+    
+    Args:
+        name: Nome o cognome da normalizzare
+        
+    Returns:
+        Stringa normalizzata in formato lowercase senza accenti o caratteri speciali
+    """
+    if not isinstance(name, str) or not name.strip():
+        return ""
+    
+    # Converti in minuscolo
+    name = name.lower().strip()
+    
+    # Rimuovi accenti (decomposizione NFD e rimozione dei caratteri combinanti)
+    name = ''.join(c for c in unicodedata.normalize('NFD', name) if not unicodedata.combining(c))
+    
+    # Gestisci apostrofi e caratteri speciali
+    # - Rimuovi apostrofi e caratteri speciali (mantieni solo lettere e spazi)
+    name = re.sub(r'[^\w\s]', '', name)
+    
+    # Standardizza spazi multipli
+    name = ' '.join(name.split())
+    
+    # Gestisci casi particolari comuni
+    replacements = {
+        # Variazioni comuni
+        'maria': 'maria',
+        'anna': 'anna',
+        'giovanni': 'giovanni',
+        'giuseppe': 'giuseppe',
+        'angelo': 'angelo',
+        'deangelo': 'de angelo',  # Gestione spazi in nomi composti
+        'de angelo': 'de angelo',
+        'dell': 'dell',           # Prefissi comuni
+        'della': 'della',
+        'dello': 'dello',
+        'dal': 'dal',
+        'dalla': 'dalla',
+        'del': 'del',
+    }
+    
+    # Applica le sostituzioni per standardizzare i nomi composti comuni
+    for key, value in replacements.items():
+        # Sostituzione solo se è una parola completa
+        name = re.sub(r'\b' + key + r'\b', value, name)
+    
+    return name
 
 def normalize_generic(name):
     """Rimuove 'art.13' e spazi dalle stringhe"""
