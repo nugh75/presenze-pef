@@ -444,7 +444,7 @@ def render_tab3(df_main):
                         all_possible_cols = current_df_for_tab3.columns.tolist()
                         internal_cols_to_exclude = ['TimestampPresenza']
                         all_exportable_cols = [col for col in all_possible_cols if col not in internal_cols_to_exclude]
-                        default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Email','Percorso','CFU']
+                        default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Percorso','classe_di_concorso_e_denominazione','CFU']
                         default_cols_final = [col for col in default_cols_export_ordered if col in all_exportable_cols]
 
                         # Miglioriamo la visualizzazione dei dati di esempio
@@ -624,7 +624,25 @@ def render_tab3(df_main):
                                                     }
                                                     cols_to_rename_final = {k: v for k, v in rename_map_export.items() if k in df_sheet_export.columns}
                                                     df_sheet_export = df_sheet_export.rename(columns=cols_to_rename_final)
+                                                    
+                                                    # Formatta correttamente date e orari per Excel
+                                                    from modules.utils import format_datetime_for_excel
+                                                    df_sheet_export = format_datetime_for_excel(df_sheet_export)
+                                                    
+                                                    # Esporta in Excel
                                                     df_sheet_export.to_excel(writer, sheet_name=sheet_name_cleaned, index=False)
+                                                    
+                                                    # Applica formato alle celle
+                                                    workbook = writer.book
+                                                    worksheet = writer.sheets[sheet_name_cleaned]
+                                                    
+                                                    # Formato per le ore
+                                                    time_format = workbook.add_format({'num_format': 'HH:MM'})
+                                                    
+                                                    # Trova colonna OraPresenza e applica il formato
+                                                    if 'OraPresenza' in df_sheet_export.columns:
+                                                        col_idx = df_sheet_export.columns.get_loc("OraPresenza")
+                                                        worksheet.set_column(col_idx, col_idx, 10, time_format)
                                                     sheets_written += 1
                                                 except Exception as sheet_error: 
                                                     error_msg = f"Errore scrittura foglio '{sheet_name_cleaned}': {sheet_error}"

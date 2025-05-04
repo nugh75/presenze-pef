@@ -190,7 +190,21 @@ def render_tab4(df_main):
                                     output = BytesIO()
                                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                                         # Usa le colonne rinominate per l'esportazione
-                                        participants_df[columns_to_show].to_excel(writer, sheet_name="Lista Partecipanti", index=False)
+                                        from modules.utils import format_datetime_for_excel
+                                        export_df = format_datetime_for_excel(participants_df[columns_to_show])
+                                        export_df.to_excel(writer, sheet_name="Lista Partecipanti", index=False)
+                                        
+                                        # Applica formato alle celle
+                                        workbook = writer.book
+                                        worksheet = writer.sheets["Lista Partecipanti"]
+                                        
+                                        # Formato per le ore
+                                        time_format = workbook.add_format({'num_format': 'HH:MM'})
+                                        
+                                        # Trova colonna OraPresenza e applica il formato
+                                        if 'OraPresenza' in export_df.columns:
+                                            col_idx = export_df.columns.get_loc("OraPresenza")
+                                            worksheet.set_column(col_idx, col_idx, 10, time_format)
                                     
                                     output.seek(0)
                                     filename_excel = f"{'_'.join(parts)}_{ts}.xlsx"
@@ -242,7 +256,22 @@ def render_tab4(df_main):
                     if st.button("Esporta in Excel", key="export_lesson_attendance_excel"):
                         output = BytesIO()
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            attendance_display.to_excel(writer, sheet_name="Frequenza Lezioni", index=False)
+                            # Formatta correttamente date e orari per Excel
+                            from modules.utils import format_datetime_for_excel
+                            export_df = format_datetime_for_excel(attendance_display)
+                            export_df.to_excel(writer, sheet_name="Frequenza Lezioni", index=False)
+                            
+                            # Applica formato alle celle
+                            workbook = writer.book
+                            worksheet = writer.sheets["Frequenza Lezioni"]
+                            
+                            # Formato per le ore
+                            time_format = workbook.add_format({'num_format': 'HH:MM'})
+                            
+                            # Trova colonna OraPresenza e applica il formato
+                            if 'OraPresenza' in export_df.columns:
+                                col_idx = export_df.columns.get_loc("OraPresenza")
+                                worksheet.set_column(col_idx, col_idx, 10, time_format)
                         
                         output.seek(0)
                         filename_excel = f"{'_'.join(filename_parts)}_{ts}.xlsx"

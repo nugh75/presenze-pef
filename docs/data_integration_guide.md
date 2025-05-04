@@ -11,7 +11,7 @@ Il sistema di gestione delle presenze può integrare due tipi di dati esterni:
 
 ## File dei Dati Esterni
 
-### File degli Iscritti: `modules/dati/iscritti_29_aprile.csv`
+### File degli Iscritti: `modules/dati/iscritti_30_aprile.csv`
 
 Questo file contiene informazioni sugli iscritti, in formato CSV con separatore ';', con le seguenti colonne principali:
 - `Cognome`, `Nome`: Dati anagrafici dello studente
@@ -45,7 +45,7 @@ Durante il caricamento dei dati delle presenze, il sistema tenta automaticamente
 Se l'integrazione dei dati non funziona correttamente:
 
 1. **Verifica dei file**:
-   - Controlla che i file `iscritti_29_aprile.csv` e `crediti.csv` esistano nei percorsi corretti
+   - Controlla che i file `iscritti_30_aprile.csv` e `crediti.csv` esistano nei percorsi corretti
    - Verifica che i formati e i separatori dei file siano corretti
 
 2. **Problemi di matching**:

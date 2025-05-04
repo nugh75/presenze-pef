@@ -1,6 +1,8 @@
 # Funzioni di utilità per l'applicazione Gestione Presenze
 import re
 import pandas as pd
+import numpy as np
+from datetime import datetime, date, time
 
 def normalize_generic(name):
     """Rimuove 'art.13' e spazi dalle stringhe"""
@@ -52,3 +54,47 @@ def extract_sort_key(percorso_str):
     if code_match:
         return code_match.group(1)
     return str(percorso_str)
+    
+def format_datetime_for_excel(df):
+    """
+    Formatta correttamente le colonne di data e ora per l'esportazione Excel.
+    
+    Args:
+        df: DataFrame pandas da preparare per l'export in Excel
+        
+    Returns:
+        DataFrame con date formattate per Excel
+    """
+    df_export = df.copy()
+    
+    # Lista delle possibili colonne contenenti date/orari
+    date_columns = ['DataPresenza']
+    time_columns = ['OraPresenza']
+    
+    try:
+        # Formatta le colonne di data (mantenendo il tipo datetime)
+        for col in date_columns:
+            if col in df_export.columns:
+                # Se la colonna contiene oggetti date, convertili in datetime
+                if pd.api.types.is_datetime64_dtype(df_export[col]) or df_export[col].apply(lambda x: isinstance(x, date) if not pd.isna(x) else False).any():
+                    # Teniamo il formato datetime che Excel riconoscerà correttamente
+                    df_export[col] = pd.to_datetime(df_export[col], errors='coerce')
+        
+        # Formatta le colonne di ora come stringa in formato "HH:MM"
+        for col in time_columns:
+            if col in df_export.columns:
+                # Convertiamo in formato stringa "HH:MM" che sarà leggibile in Excel
+                df_export[col] = df_export[col].apply(
+                    lambda x: x.strftime('%H:%M') 
+                    if isinstance(x, time) else (
+                        x.strftime('%H:%M')
+                        if isinstance(x, datetime) or isinstance(x, pd.Timestamp) 
+                        else x
+                    ) if not pd.isna(x) else ""
+                )
+    
+    except Exception as e:
+        # In caso di errore nella formattazione, restituiamo il dataframe originale
+        print(f"Errore nella formattazione delle date: {e}")
+        
+    return df_export
