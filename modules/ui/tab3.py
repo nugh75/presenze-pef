@@ -444,7 +444,7 @@ def render_tab3(df_main):
                         all_possible_cols = current_df_for_tab3.columns.tolist()
                         internal_cols_to_exclude = ['TimestampPresenza']
                         all_exportable_cols = [col for col in all_possible_cols if col not in internal_cols_to_exclude]
-                        default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Percorso','classe_di_concorso_e_denominazione','CFU']
+                        default_cols_export_ordered = ['DataPresenza','OraPresenza','DenominazioneAttività','Cognome','Nome','Percorso','Codice_classe_di_concorso_e_denominazione','CFU']
                         default_cols_final = [col for col in default_cols_export_ordered if col in all_exportable_cols]
 
                         # Miglioriamo la visualizzazione dei dati di esempio
