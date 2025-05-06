@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 from modules.attendance import calculate_lesson_attendance
+from modules.utils import ensure_string_columns
 
 def render_tab4(df_main):
     """Renderizza l'interfaccia della Tab 4: Frequenza Lezioni"""
@@ -88,6 +89,9 @@ def render_tab4(df_main):
                 }
                 attendance_display = attendance_data.rename(columns=display_cols)
                 
+                # Converti la colonna Matricola in stringa per evitare errori di Arrow (se presente)
+                attendance_display = ensure_string_columns(attendance_display)
+                
                 # Visualizza la tabella con i dati
                 st.dataframe(attendance_display, use_container_width=True)
                 
@@ -150,6 +154,9 @@ def render_tab4(df_main):
                         # Rimuovi colonne duplicate dal DataFrame finale (ulteriore sicurezza)
                         participants_df = participants_df.loc[:, ~participants_df.columns.duplicated()]
 
+                        # Converti la colonna Matricola in stringa per evitare errori di Arrow
+                        participants_df = ensure_string_columns(participants_df)
+
                         if columns_to_show:
                             # Filtra solo le colonne da mostrare che sono effettivamente nel DataFrame (potrebbero essere state rimosse per duplicazione)
                             valid_columns = [col for col in columns_to_show if col in participants_df.columns]
@@ -191,7 +198,9 @@ def render_tab4(df_main):
                                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                                         # Usa le colonne rinominate per l'esportazione
                                         from modules.utils import format_datetime_for_excel
-                                        export_df = format_datetime_for_excel(participants_df[columns_to_show])
+                                        # Assicurati che la colonna Matricola sia in formato stringa
+                                        participants_filtered = ensure_string_columns(participants_df[columns_to_show])
+                                        export_df = format_datetime_for_excel(participants_filtered)
                                         export_df.to_excel(writer, sheet_name="Lista Partecipanti", index=False)
                                         
                                         # Applica formato alle celle

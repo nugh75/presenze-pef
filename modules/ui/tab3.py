@@ -5,6 +5,7 @@ import re
 from datetime import datetime, date
 from io import BytesIO
 from modules.attendance import calculate_attendance
+from modules.utils import ensure_string_columns
 
 # Definisco le funzioni di utilità direttamente qui per evitare problemi di importazione
 def clean_sheet_name(name, used_names=None):
@@ -312,9 +313,10 @@ def render_tab3(df_main):
                                         else:
                                             df_to_show = df_to_display_agg[cols_disp_agg_exist]
                                     else:
-                                        df_to_show = df_to_display_agg[cols_disp_agg_exist]
-                                    
-                                    # Dataframe con styling condizionale
+                                        df_to_show = df_to_display_agg[cols_disp_agg_exist]                                        # Converti la colonna Matricola in stringa per evitare errori di Arrow
+                                    df_to_show = ensure_string_columns(df_to_show)
+
+                                        # Dataframe con styling condizionale
                                     if highlight_opt and 'Presenze' in df_to_show.columns:
                                         # Crea una maschera per le presenze basse (< 4)
                                         def highlight_low_attendance(val):
@@ -323,7 +325,8 @@ def render_tab3(df_main):
                                             return ''
                                         
                                         # Applica lo styling solo alla colonna Presenze
-                                        styled_df = df_to_show.style.applymap(
+                                        # Sostituito applymap con map (non più deprecato)
+                                        styled_df = df_to_show.style.map(
                                             highlight_low_attendance, subset=['Presenze']
                                         )
                                         st.dataframe(styled_df, use_container_width=True)

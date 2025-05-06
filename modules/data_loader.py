@@ -218,7 +218,8 @@ def load_data(uploaded_file):
                 
         # Gestione delle date e orari
         try: 
-            df['DataPresenza'] = pd.to_datetime(df['DataPresenza'], errors='coerce').dt.date
+            # Specifichiamo esplicitamente dayfirst=True per il formato dd.mm.yyyy
+            df['DataPresenza'] = pd.to_datetime(df['DataPresenza'], errors='coerce', dayfirst=True).dt.date
             df.loc[pd.isna(df['DataPresenza']), 'DataPresenza'] = pd.NaT
         except Exception as e: 
             st.warning(f"Problema conversione 'DataPresenza': {e}.")
@@ -383,6 +384,10 @@ def load_data(uploaded_file):
             if col in df.columns and col not in final_cols:
                 final_cols.append(col)
 
+        # Assicurarsi che la colonna Matricola sia sempre una stringa
+        if 'Matricola' in df.columns:
+            df['Matricola'] = df['Matricola'].fillna('').astype(str)
+            
         # Rimuovi duplicati mantenendo l'ordine (ulteriore sicurezza)
         final_cols = list(dict.fromkeys(final_cols))
         cols_to_keep = [col for col in final_cols if col in df.columns]
@@ -531,6 +536,10 @@ def match_students_data(df_presences, df_enrolled):
         base_cols = ['CodiceFiscale', 'Email'] # Questi sono sempre da prendere dagli iscritti
         other_cols = ['Percorso', 'Codice_Classe_di_concorso', 'Codice_classe_di_concorso_e_denominazione', 
                      'Dipartimento', 'LogonName', 'Matricola']
+        
+        # Assicurarsi che le matricole nel file iscritti siano stringhe
+        if 'Matricola' in df_enrolled.columns:
+            df_enrolled['Matricola'] = df_enrolled['Matricola'].fillna('').astype(str)
         
         # Filtra per includere solo colonne esistenti nel dataframe iscritti
         available_other_cols = [col for col in other_cols if col in df_enrolled.columns]
@@ -843,7 +852,7 @@ def load_multiple_files(uploaded_files):
                 continue
                 
             # Verifica schema dati per i nuovi formati
-            columns = df.columns.tolist()
+            columns = df.columns.tolist();
             
             # Identificazione e mappatura colonne
             # Formato 1: Con colonne DataPresenza e OraPresenza già presenti

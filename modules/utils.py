@@ -151,3 +151,31 @@ def format_datetime_for_excel(df):
         print(f"Errore nella formattazione delle date: {e}")
         
     return df_export
+
+def ensure_string_columns(df, columns_to_convert=None):
+    """
+    Converte le colonne specificate in stringhe, gestendo correttamente i valori NaN/None.
+    Particolarmente utile per colonne come 'Matricola' che devono essere stringhe per evitare
+    errori di conversione in Arrow/Streamlit.
+    
+    Args:
+        df: DataFrame pandas
+        columns_to_convert: Lista di colonne da convertire in stringa (default: ['Matricola'])
+        
+    Returns:
+        DataFrame con le colonne convertite in stringa
+    """
+    if df is None or df.empty:
+        return df
+        
+    if columns_to_convert is None:
+        columns_to_convert = ['Matricola']
+    
+    df_result = df.copy()
+    
+    for col in columns_to_convert:
+        if col in df_result.columns:
+            # Sostituiamo i valori NaN/None con stringhe vuote e convertiamo tutto il resto in stringhe
+            df_result[col] = df_result[col].fillna('').astype(str)
+    
+    return df_result
