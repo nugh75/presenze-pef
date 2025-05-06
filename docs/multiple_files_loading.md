@@ -39,7 +39,7 @@ Il sistema supporta il caricamento di:
 
 6. **Integrazione Dati Esterni**:
    - **Dati dei CFU**: Integrazione con informazioni dal file `crediti.csv`
-   - **Dati degli Iscritti**: Integrazione con informazioni dal file `modules/dati/iscritti_30_aprile.csv`
+   - **Dati degli Iscritti**: Integrazione con informazioni dal file `modules/dati/iscritti_05_maggio.csv`
 
 ## Processo di Integrazione Dati Esterni
 
@@ -52,7 +52,7 @@ Il sistema supporta il caricamento di:
 
 ### Integrazione dei Dati degli Iscritti
 
-1. Caricamento del file `modules/dati/iscritti_30_aprile.csv`
+1. Caricamento del file `modules/dati/iscritti_05_maggio.csv`
 2. Normalizzazione di nomi e cognomi
 3. Tentativo di abbinamento prima per codice fiscale, poi per nome e cognome
 4. Integrazione delle seguenti informazioni:
@@ -67,7 +67,7 @@ Il sistema supporta il caricamento di:
 Se l'integrazione dei dati non funziona correttamente, verificare:
 1. **Problemi di formattazione**: Controllare che i formati di data e ora siano riconosciuti
 2. **Problemi di corrispondenza**: Controllare che i codici fiscali o nomi/cognomi corrispondano tra i file
-3. **File mancanti o inaccessibili**: Verificare che i file `crediti.csv` e `iscritti_30_aprile.csv` siano accessibili
+3. **File mancanti o inaccessibili**: Verificare che i file `crediti.csv` e `iscritti_05_maggio.csv` siano accessibili
 
 ## Analisi Diagnostica
 

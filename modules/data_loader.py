@@ -403,20 +403,20 @@ def load_enrolled_students_data():
         # Costruisco il path con varie possibilità per robustezza
         # Percorso 1: Dalla directory di root del progetto
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        file_path = os.path.join(base_path, 'modules', 'dati', 'iscritti_30_aprile.csv')
+        file_path = os.path.join(base_path, 'modules', 'dati', 'iscritti_05_maggio.csv')
         
         # Verifica se il file esiste
         if not os.path.exists(file_path):
             st.warning(f"File degli iscritti non trovato al path: {file_path}")
             
             # Percorso 2: Considerando che __file__ potrebbe già essere in modules/
-            file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dati', 'iscritti_30_aprile.csv')
+            file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dati', 'iscritti_05_maggio.csv')
             
             if not os.path.exists(file_path):
                 st.warning(f"File degli iscritti non trovato al path alternativo: {file_path}")
                 
                 # Percorso 3: Path relativo come ultima risorsa
-                file_path = 'modules/dati/iscritti_30_aprile.csv'
+                file_path = 'modules/dati/iscritti_05_maggio.csv'
                 
                 if not os.path.exists(file_path):
                     st.error(f"File degli iscritti non trovato in nessun percorso! Ultimo tentativo: {file_path}")
